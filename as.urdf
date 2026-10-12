@@ -1,0 +1,295 @@
+<?xml version="1.0"?>
+
+<robot name="rl_pull_door">
+
+  <!-- ========================================================= -->
+  <!-- Materials                                                 -->
+  <!-- ========================================================= -->
+
+  <material name="frame_gray">
+    <color rgba="0.35 0.35 0.35 1.0"/>
+  </material>
+
+  <material name="door_brown">
+    <color rgba="0.55 0.28 0.10 1.0"/>
+  </material>
+
+  <material name="handle_metal">
+    <color rgba="0.75 0.75 0.78 1.0"/>
+  </material>
+
+  <material name="marker_red">
+    <color rgba="1.0 0.1 0.1 1.0"/>
+  </material>
+
+
+  <!-- ========================================================= -->
+  <!-- Root / Door frame                                         -->
+  <!--
+       Root frame == hinge axis at floor level.
+
+       Door closed:
+           panel extends in +X
+           panel normal ~= +/-Y
+           vertical direction = +Z
+  -->
+  <!-- ========================================================= -->
+
+  <link name="door_frame">
+
+    <!-- hinge-side wall -->
+    <visual>
+      <origin xyz="-0.75 0 1.10" rpy="0 0 0"/>
+      <geometry>
+        <box size="1.50 0.10 2.20"/>
+      </geometry>
+      <material name="frame_gray"/>
+    </visual>
+
+    <collision>
+      <origin xyz="-0.75 0 1.10" rpy="0 0 0"/>
+      <geometry>
+        <box size="1.50 0.10 2.20"/>
+      </geometry>
+    </collision>
+
+
+    <!-- latch-side wall
+         doorway width = 0.90 m
+         right wall starts at x = 0.90
+    -->
+    <visual>
+      <origin xyz="1.65 0 1.10" rpy="0 0 0"/>
+      <geometry>
+        <box size="1.50 0.10 2.20"/>
+      </geometry>
+      <material name="frame_gray"/>
+    </visual>
+
+    <collision>
+      <origin xyz="1.65 0 1.10" rpy="0 0 0"/>
+      <geometry>
+        <box size="1.50 0.10 2.20"/>
+      </geometry>
+    </collision>
+
+
+    <!-- header -->
+    <visual>
+      <origin xyz="0.45 0 2.10" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.90 0.10 0.20"/>
+      </geometry>
+      <material name="frame_gray"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0.45 0 2.10" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.90 0.10 0.20"/>
+      </geometry>
+    </collision>
+
+  </link>
+
+
+  <!-- ========================================================= -->
+  <!-- Door panel                                                -->
+  <!--
+       width     = 0.90 m
+       thickness = 0.04 m
+       height    = 2.00 m
+       mass      = 30 kg
+
+       Child link frame remains at hinge axis.
+  -->
+  <!-- ========================================================= -->
+
+  <link name="door_panel">
+
+    <inertial>
+      <origin xyz="0.45 0 1.00" rpy="0 0 0"/>
+      <mass value="30.0"/>
+
+      <!-- Box inertia about COM:
+           x = width     = 0.90
+           y = thickness = 0.04
+           z = height    = 2.00
+      -->
+      <inertia
+        ixx="10.004"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="12.025"
+        iyz="0.0"
+        izz="2.029"/>
+    </inertial>
+
+
+    <visual>
+      <origin xyz="0.45 0 1.00" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.90 0.04 2.00"/>
+      </geometry>
+      <material name="door_brown"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0.45 0 1.00" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.90 0.04 2.00"/>
+      </geometry>
+    </collision>
+
+  </link>
+
+
+  <!-- ========================================================= -->
+  <!-- Main door hinge                                           -->
+  <!--
+       axis = -Z:
+       positive theta swings door toward -Y.
+
+       1.40 rad ~= 80 deg
+  -->
+  <!-- ========================================================= -->
+
+  <joint name="door_hinge_joint" type="revolute">
+
+    <parent link="door_frame"/>
+    <child link="door_panel"/>
+
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+
+    <axis xyz="0 0 -1"/>
+
+    <limit
+      lower="0.0"
+      upper="1.40"
+      effort="150.0"
+      velocity="2.0"/>
+
+    <!--
+      Only numerical passive damping here.
+
+      Paper-style constant resistance torque and
+      quadratic damping should be applied from Isaac Lab.
+    -->
+    <dynamics
+      damping="0.05"
+      friction="0.0"/>
+
+  </joint>
+
+
+  <!-- ========================================================= -->
+  <!-- Handle                                                    -->
+  <!--
+       Pivot:
+         x = 0.80 m from hinge
+         y = -0.035 m, on robot-facing side
+         z = 1.00 m
+
+       Handle rotates about local +Y.
+       Positive rotation makes the lever move downward.
+  -->
+  <!-- ========================================================= -->
+
+  <link name="door_handle">
+
+    <inertial>
+      <origin xyz="0.06 0 0" rpy="0 0 0"/>
+      <mass value="0.30"/>
+
+      <inertia
+        ixx="0.000031"
+        ixy="0.0"
+        ixz="0.0"
+        iyy="0.000376"
+        iyz="0.0"
+        izz="0.000376"/>
+    </inertial>
+
+
+    <!-- Handle lever -->
+    <visual>
+      <origin xyz="0.06 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.12 0.025 0.025"/>
+      </geometry>
+      <material name="handle_metal"/>
+    </visual>
+
+    <collision>
+      <origin xyz="0.06 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.12 0.025 0.025"/>
+      </geometry>
+    </collision>
+
+  </link>
+
+
+  <joint name="handle_joint" type="revolute">
+
+    <parent link="door_panel"/>
+    <child link="door_handle"/>
+
+    <!--
+       handle is close to free edge
+       and placed on -Y side of panel
+    -->
+    <origin xyz="0.80 -0.035 1.00" rpy="0 0 0"/>
+
+    <axis xyz="0 1 0"/>
+
+    <!-- about 70 degrees -->
+    <limit
+      lower="0.0"
+      upper="1.2217"
+      effort="10.0"
+      velocity="4.0"/>
+
+    <dynamics
+      damping="0.02"
+      friction="0.0"/>
+
+  </joint>
+
+
+  <!-- ========================================================= -->
+  <!-- Handle tip marker                                         -->
+  <!--
+       Very useful for RL:
+         - EE-handle distance
+         - grasp zone
+         - handle target pose
+
+       No collision geometry.
+  -->
+  <!-- ========================================================= -->
+
+  <link name="handle_tip">
+
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <sphere radius="0.012"/>
+      </geometry>
+      <material name="marker_red"/>
+    </visual>
+
+  </link>
+
+
+  <joint name="handle_tip_joint" type="fixed">
+
+    <parent link="door_handle"/>
+    <child link="handle_tip"/>
+
+    <origin xyz="0.12 0 0" rpy="0 0 0"/>
+
+  </joint>
+
+
+</robot>

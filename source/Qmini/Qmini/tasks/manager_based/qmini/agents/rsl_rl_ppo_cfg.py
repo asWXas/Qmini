@@ -3,26 +3,47 @@
 #
 # SPDX-License-Identifier: BSD-3-Clause
 
-from isaaclab.utils import configclass
+from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlPpoActorCriticCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg
+
+from Qmini.manager.multi_critic.cfg import RslRlMultiCriticPpoAlgorithmCfg
 
 
 @configclass
 class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
+    """RSL-RL runner for the three-head Multi-Critic cart-pole template."""
+
+    class_name = "OnPolicyRunner"
     num_steps_per_env = 16
-    max_iterations = 150
-    save_interval = 50
-    experiment_name = "cartpole_direct"
-    policy = RslRlPpoActorCriticCfg(
-        init_noise_std=1.0,
-        actor_obs_normalization=False,
-        critic_obs_normalization=False,
-        actor_hidden_dims=[32, 32],
-        critic_hidden_dims=[32, 32],
+    max_iterations = 3000
+    save_interval = 100
+    experiment_name = "qmini_multi_critic_template"
+    empirical_normalization = False
+    obs_groups = {
+        "actor": ["policy"],
+        "critic": ["policy"],
+    }
+    actor = RslRlMLPModelCfg(
+        hidden_dims=[512, 256, 128],
         activation="elu",
+        obs_normalization=True,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0),
     )
-    algorithm = RslRlPpoAlgorithmCfg(
+    critic = RslRlMLPModelCfg(
+        hidden_dims=[512, 256, 128],
+        activation="elu",
+        obs_normalization=True,
+    )
+    algorithm = RslRlMultiCriticPpoAlgorithmCfg(
+        # This insertion order must exactly match RewardsCfg in qmini_env_cfg.py.
+        critic_groups={
+            "task": {"weight": 0.60},
+            "aesthetic": {"weight": 0.15},
+            "constraint": {"weight": 0.25},
+        },
+        normalize_critic_weights=False,
+        rnd_group=None,
         value_loss_coef=1.0,
         use_clipped_value_loss=True,
         clip_param=0.2,
@@ -35,4 +56,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         lam=0.95,
         desired_kl=0.01,
         max_grad_norm=1.0,
+        normalize_advantage_per_mini_batch=False,
+        rnd_cfg=None,
+        symmetry_cfg=None,
     )

@@ -22,6 +22,9 @@
 **/*.pyc
 **/*.pb
 
+# Local credentials
+source/Qmini/Qmini/manager/eureka/model_configs/api.py
+
 # Docker/Singularity
 **/*.sif
 docker/cluster/exports/
@@ -35,6 +38,7 @@ docker/.container.cfg
 !.vscode
 
 # Outputs
+**/log/*
 **/output/*
 **/outputs/*
 **/videos/*

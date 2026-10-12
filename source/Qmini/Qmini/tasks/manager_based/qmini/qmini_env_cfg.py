@@ -1,7 +1,9 @@
-# Copyright (c) 2022-2025, The Isaac Lab Project Developers (https://github.com/isaac-sim/IsaacLab/blob/main/CONTRIBUTORS.md).
+# Copyright (c) 2022-2026, The Isaac Lab Project Developers.
 # All rights reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+
+"""Minimal grouped-reward cart-pole environment for Multi-Critic PPO."""
 
 import math
 
@@ -19,59 +21,43 @@ from isaaclab.utils import configclass
 
 from . import mdp
 
-##
-# Pre-defined configs
-##
-
-from isaaclab_assets.robots.cartpole import CARTPOLE_CFG  # isort:skip
-
-
-##
-# Scene definition
-##
+# isort: off
+from isaaclab_assets.robots.cartpole import CARTPOLE_CFG
+# isort: on
 
 
 @configclass
 class QminiSceneCfg(InteractiveSceneCfg):
-    """Configuration for a cart-pole scene."""
+    """A dependency-free cart-pole scene suitable for checking the algorithm wiring."""
 
-    # ground plane
     ground = AssetBaseCfg(
         prim_path="/World/ground",
         spawn=sim_utils.GroundPlaneCfg(size=(100.0, 100.0)),
     )
-
-    # robot
     robot: ArticulationCfg = CARTPOLE_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
-
-    # lights
     dome_light = AssetBaseCfg(
         prim_path="/World/DomeLight",
         spawn=sim_utils.DomeLightCfg(color=(0.9, 0.9, 0.9), intensity=500.0),
     )
 
 
-##
-# MDP settings
-##
-
-
 @configclass
 class ActionsCfg:
-    """Action specifications for the MDP."""
+    """Cart force action."""
 
-    joint_effort = mdp.JointEffortActionCfg(asset_name="robot", joint_names=["slider_to_cart"], scale=100.0)
+    joint_effort = mdp.JointEffortActionCfg(
+        asset_name="robot",
+        joint_names=["slider_to_cart"],
+        scale=100.0,
+    )
 
 
 @configclass
 class ObservationsCfg:
-    """Observation specifications for the MDP."""
+    """Shared actor/critic observations for the base template."""
 
     @configclass
     class PolicyCfg(ObsGroup):
-        """Observations for policy group."""
-
-        # observation terms (order preserved)
         joint_pos_rel = ObsTerm(func=mdp.joint_pos_rel)
         joint_vel_rel = ObsTerm(func=mdp.joint_vel_rel)
 
@@ -79,15 +65,13 @@ class ObservationsCfg:
             self.enable_corruption = False
             self.concatenate_terms = True
 
-    # observation groups
     policy: PolicyCfg = PolicyCfg()
 
 
 @configclass
 class EventCfg:
-    """Configuration for events."""
+    """Episode reset randomization."""
 
-    # reset
     reset_cart_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
@@ -97,7 +81,6 @@ class EventCfg:
             "velocity_range": (-0.5, 0.5),
         },
     )
-
     reset_pole_position = EventTerm(
         func=mdp.reset_joints_by_offset,
         mode="reset",
@@ -111,70 +94,76 @@ class EventCfg:
 
 @configclass
 class RewardsCfg:
-    """Reward terms for the MDP."""
+    """Three semantic groups; their names/order must match ``critic_groups``."""
 
-    # (1) Constant running reward
-    alive = RewTerm(func=mdp.is_alive, weight=1.0)
-    # (2) Failure penalty
-    terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
-    # (3) Primary task: keep pole upright
-    pole_pos = RewTerm(
-        func=mdp.joint_pos_target_l2,
-        weight=-1.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]), "target": 0.0},
-    )
-    # (4) Shaping tasks: lower cart velocity
-    cart_vel = RewTerm(
-        func=mdp.joint_vel_l1,
-        weight=-0.01,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"])},
-    )
-    # (5) Shaping tasks: lower pole angular velocity
-    pole_vel = RewTerm(
-        func=mdp.joint_vel_l1,
-        weight=-0.005,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"])},
-    )
+    @configclass
+    class TaskCfg:
+        # Primary objective: survive while keeping the pole upright.
+        alive = RewTerm(func=mdp.is_alive, weight=1.0)
+        pole_pos = RewTerm(
+            func=mdp.joint_pos_target_l2,
+            weight=-1.0,
+            params={
+                "asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"]),
+                "target": 0.0,
+            },
+        )
+
+    @configclass
+    class AestheticCfg:
+        # Smooth, low-speed motion shaping.
+        cart_vel = RewTerm(
+            func=mdp.joint_vel_l1,
+            weight=-0.01,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"])},
+        )
+        pole_vel = RewTerm(
+            func=mdp.joint_vel_l1,
+            weight=-0.005,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["cart_to_pole"])},
+        )
+
+    @configclass
+    class ConstraintCfg:
+        # Constraint/failure signal remains separate from the task objective.
+        terminating = RewTerm(func=mdp.is_terminated, weight=-2.0)
+
+    task: TaskCfg = TaskCfg()
+    aesthetic: AestheticCfg = AestheticCfg()
+    constraint: ConstraintCfg = ConstraintCfg()
 
 
 @configclass
 class TerminationsCfg:
-    """Termination terms for the MDP."""
+    """Time and cart travel limits."""
 
-    # (1) Time out
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
-    # (2) Cart out of bounds
     cart_out_of_bounds = DoneTerm(
         func=mdp.joint_pos_out_of_manual_limit,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]), "bounds": (-3.0, 3.0)},
+        params={
+            "asset_cfg": SceneEntityCfg("robot", joint_names=["slider_to_cart"]),
+            "bounds": (-3.0, 3.0),
+        },
     )
-
-
-##
-# Environment configuration
-##
 
 
 @configclass
 class QminiEnvCfg(ManagerBasedRLEnvCfg):
-    # Scene settings
+    """Multi-Critic cart-pole training configuration."""
+
     scene: QminiSceneCfg = QminiSceneCfg(num_envs=4096, env_spacing=4.0)
-    # Basic settings
     observations: ObservationsCfg = ObservationsCfg()
     actions: ActionsCfg = ActionsCfg()
     events: EventCfg = EventCfg()
-    # MDP settings
     rewards: RewardsCfg = RewardsCfg()
     terminations: TerminationsCfg = TerminationsCfg()
 
-    # Post initialization
     def __post_init__(self) -> None:
-        """Post initialization."""
-        # general settings
         self.decimation = 2
-        self.episode_length_s = 5
-        # viewer settings
+        self.episode_length_s = 5.0
         self.viewer.eye = (8.0, 0.0, 5.0)
-        # simulation settings
-        self.sim.dt = 1 / 120
+        self.sim.dt = 1.0 / 120.0
         self.sim.render_interval = self.decimation
+
+
+__all__ = ["QminiEnvCfg"]
