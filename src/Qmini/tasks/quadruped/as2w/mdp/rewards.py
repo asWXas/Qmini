@@ -7,6 +7,39 @@ import torch
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 
 
+def flat_terrain_four_wheel_contact(
+    env,
+    height_sensor_cfg: SceneEntityCfg,
+    contact_sensor_cfg: SceneEntityCfg,
+    height_threshold: float = 0.03,
+    contact_threshold: float = 1.0,
+    std: float = 0.25,
+    command_name: str = "base_velocity",
+    standing_threshold: float = 0.1,
+    pure_vx_tolerance: float = 1e-3,
+):
+    """站立或平坦地形纯 VX 指令下奖励四轮接触比例。"""
+    if not math.isfinite(std) or std <= 0:
+        raise ValueError("std must be finite and positive")
+    heights = env.scene.sensors[height_sensor_cfg.name].data.ray_hits_w.torch[..., 2]
+    valid = torch.isfinite(heights)
+    highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
+    lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
+    flat = valid.all(dim=-1) & ((highest - lowest) < height_threshold)
+    forces = env.scene.sensors[contact_sensor_cfg.name].data.net_forces_w.torch[:, contact_sensor_cfg.body_ids]
+    if forces.shape[1] != 4:
+        raise ValueError("Expected exactly four wheel contact bodies")
+    contact = torch.linalg.vector_norm(forces, dim=-1) > contact_threshold
+    contact_ratio = contact.to(dtype=heights.dtype).sum(dim=-1) / 4.0
+    reward = torch.exp(-(1.0 - contact_ratio) / std)
+    command = env.command_manager.get_command(command_name)
+    standing = torch.linalg.vector_norm(command[:, :3], dim=-1) < standing_threshold
+    pure_vx = (command[:, 0].abs() > pure_vx_tolerance) & (
+        command[:, 1:3].abs() <= pure_vx_tolerance
+    ).all(dim=-1)
+    return torch.where(standing | (flat & pure_vx), reward, 0.0)
+
+
 def wheel_obstacle_clearance(
     env,
     asset_cfg: SceneEntityCfg,

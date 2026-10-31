@@ -489,6 +489,23 @@ class RewardsCfg:
     )
 
     gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
+    
+    flat_four_wheel_contact = RewTerm(
+        func=mdp.flat_terrain_four_wheel_contact,
+        weight=0.1,
+        params={
+            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+            "contact_sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+            ),
+            "height_threshold": 0.03,
+            "contact_threshold": 1.0,
+            "std": 0.2,
+            "command_name": "base_velocity",
+            "standing_threshold": 0.1,
+            "pure_vx_tolerance": 1e-3,
+        },
+    )
 
     turning_lateral_gait = RewTerm(
         func=mdp.GaitReward,
