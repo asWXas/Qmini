@@ -540,19 +540,19 @@ class RewardsCfg:
 
 
 
-    # wheel_obstacle_clearance = RewTerm(
-    #     func=mdp.wheel_obstacle_clearance,
-    #     weight=-5.0,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg(
-    #             "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
-    #         ),
-    #         "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
-    #         "wheel_radius": 0.086,
-    #         "clearance": 0.0,
-    #         "obstacle_threshold": 0.03,
-    #     },
-    # )
+    wheel_obstacle_clearance = RewTerm(
+        func=mdp.wheel_obstacle_clearance,
+        weight=-5.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+            ),
+            "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
+            "wheel_radius": 0.086,
+            "clearance": 0.0,
+            "obstacle_threshold": 0.03,
+        },
+    )
 
     stand_still_joint_deviation = RewTerm(
         func=mdp.stand_still_joint_deviation,
