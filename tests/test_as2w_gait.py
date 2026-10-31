@@ -2,10 +2,46 @@
 
 from types import SimpleNamespace as N
 
+import pytest
 import torch
 
 from Qmini.tasks.quadruped.as2w.env.as2w_env_cfg import RewardsCfg
 from Qmini.tasks.quadruped.as2w.mdp.rewards import GaitReward
+
+
+def test_air_time_variance_gate_clipping_and_reentry():
+    from isaaclab.managers import SceneEntityCfg
+
+    commands = torch.tensor([[0., 0., 0.], [1., 0., 0.], [0., .2, 0.],
+                             [0., 0., -.2], [1., .08, .08], [0., .1, 0.]])
+    # Select only wheel bodies; long completed intervals saturate at 0.5 s.
+    air = torch.tensor([[9., .1, .3, .6, 30.]]).repeat(6, 1)
+    contact = torch.tensor([[9., .1, .1, .3, .3]]).repeat(6, 1)
+    sensor = N(cfg=N(track_air_time=True), data=N(
+        last_air_time=N(torch=air), last_contact_time=N(torch=contact),
+    ))
+    env = N(scene=N(sensors={"contact_forces": sensor}),
+            command_manager=N(get_command=lambda name: commands))
+    cfg = RewardsCfg().air_time_variance_penalty
+    cfg.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_ids=[1, 2, 3, 4])
+    original_air, original_contact = air.clone(), contact.clone()
+    expected = torch.tensor([0., 0., .05, .05, .05, 0.])
+    torch.testing.assert_close(cfg.func(env, **cfg.params), expected)
+    # Entering and re-entering a turn immediately uses the unchanged sensor history.
+    commands[0, 2] = .2
+    assert cfg.func(env, **cfg.params)[0] > 0
+    commands[0, 2] = 0.
+    assert cfg.func(env, **cfg.params)[0] == 0
+    commands[0, 2] = -.2
+    torch.testing.assert_close(cfg.func(env, **cfg.params)[0], torch.tensor(.05))
+    torch.testing.assert_close(air, original_air)
+    torch.testing.assert_close(contact, original_contact)
+    air[:, 1:] = 30.
+    contact[:, 1:] = 30.
+    torch.testing.assert_close(cfg.func(env, **cfg.params), torch.zeros(6))
+    sensor.cfg.track_air_time = False
+    with pytest.raises(RuntimeError, match="track_air_time"):
+        cfg.func(env, **cfg.params)
 
 
 def test_gait_command_gate_and_pair_timing():

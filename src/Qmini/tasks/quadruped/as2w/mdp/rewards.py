@@ -68,6 +68,27 @@ def wheel_obstacle_clearance(
     return penalty
 
 
+def air_time_variance_penalty(
+    env,
+    sensor_cfg: SceneEntityCfg,
+    command_name: str = "base_velocity",
+    command_threshold: float = 0.1,
+) -> torch.Tensor:
+    """仅横移/转向时计算上一段腾空、着地时长方差，时长截断至 0.5 s。
+
+    直接使用传感器历史记录，指令切换时不清空或扣除之前的时长。
+    """
+    sensor = env.scene.sensors[sensor_cfg.name]
+    if not sensor.cfg.track_air_time:
+        raise RuntimeError("Activate ContactSensor's track_air_time!")
+    last_air_time = sensor.data.last_air_time.torch[:, sensor_cfg.body_ids]
+    last_contact_time = sensor.data.last_contact_time.torch[:, sensor_cfg.body_ids]
+    penalty = last_air_time.clamp(max=0.5).var(dim=1) + last_contact_time.clamp(max=0.5).var(dim=1)
+    command = env.command_manager.get_command(command_name)
+    active = torch.linalg.vector_norm(command[:, 1:3], dim=1) > command_threshold
+    return torch.where(active, penalty, 0.0)
+
+
 def gait_air_time_limits(
     env,
     sensor_cfg: SceneEntityCfg,
@@ -198,15 +219,15 @@ class GaitReward(ManagerTermBase):
         super().__init__(cfg, env)
         self.std = cfg.params["std"]
         self.max_err = cfg.params["max_err"]
-        if self.std <= 0 or self.max_err <= 0:
+        if self.std <= 0 or self.max_err <= 0: # pyright: ignore[reportOperatorIssue]
             raise ValueError("std and max_err must be positive")
         self.contact_sensor = env.scene.sensors[cfg.params["sensor_cfg"].name]
-        if not self.contact_sensor.cfg.track_air_time:
+        if not self.contact_sensor.cfg.track_air_time: # type: ignore
             raise ValueError("GaitReward requires track_air_time=True")
         pairs = cfg.params["synced_feet_pair_names"]
-        if len(pairs) != 2 or any(len(pair) != 2 for pair in pairs):
+        if len(pairs) != 2 or any(len(pair) != 2 for pair in pairs):  # type: ignore
             raise ValueError("Expected two synchronized wheel pairs")
-        self.synced_feet_pairs = [self.contact_sensor.find_sensors(pair)[0] for pair in pairs]
+        self.synced_feet_pairs = [self.contact_sensor.find_sensors(pair)[0] for pair in pairs] # pyright: ignore[reportGeneralTypeIssues, reportAttributeAccessIssue]
         ids = [idx for pair in self.synced_feet_pairs for idx in pair]
         if any(len(pair) != 2 for pair in self.synced_feet_pairs) or len(set(ids)) != 4:
             raise ValueError("Expected four distinct wheel sensors")
@@ -235,9 +256,9 @@ class GaitReward(ManagerTermBase):
         air_time = self.contact_sensor.data.current_air_time.torch
         contact_time = self.contact_sensor.data.current_contact_time.torch
         # penalize the difference between the most recent air time and contact time of synced feet pairs.
-        se_air = torch.clip(torch.square(air_time[:, foot_0] - air_time[:, foot_1]), max=self.max_err**2)
-        se_contact = torch.clip(torch.square(contact_time[:, foot_0] - contact_time[:, foot_1]), max=self.max_err**2)
-        return torch.exp(-(se_air + se_contact) / self.std)
+        se_air = torch.clip(torch.square(air_time[:, foot_0] - air_time[:, foot_1]), max=self.max_err**2) # type: ignore
+        se_contact = torch.clip(torch.square(contact_time[:, foot_0] - contact_time[:, foot_1]), max=self.max_err**2) # type: ignore
+        return torch.exp(-(se_air + se_contact) / self.std) # type: ignore
 
     def _async_reward_func(self, foot_0: int, foot_1: int) -> torch.Tensor:
         """Reward anti-synchronization of two feet."""
@@ -245,6 +266,6 @@ class GaitReward(ManagerTermBase):
         contact_time = self.contact_sensor.data.current_contact_time.torch
         # penalize the difference between opposing contact modes air time of feet 1 to contact time of feet 2
         # and contact time of feet 1 to air time of feet 2) of feet pairs that are not in sync with each other.
-        se_act_0 = torch.clip(torch.square(air_time[:, foot_0] - contact_time[:, foot_1]), max=self.max_err**2)
-        se_act_1 = torch.clip(torch.square(contact_time[:, foot_0] - air_time[:, foot_1]), max=self.max_err**2)
-        return torch.exp(-(se_act_0 + se_act_1) / self.std)
+        se_act_0 = torch.clip(torch.square(air_time[:, foot_0] - contact_time[:, foot_1]), max=self.max_err**2) # type: ignore
+        se_act_1 = torch.clip(torch.square(contact_time[:, foot_0] - air_time[:, foot_1]), max=self.max_err**2) # type: ignore
+        return torch.exp(-(se_act_0 + se_act_1) / self.std) # type: ignore

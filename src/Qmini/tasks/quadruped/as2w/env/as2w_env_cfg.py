@@ -525,6 +525,17 @@ class RewardsCfg:
             "command_threshold": 0.1,
         },
     )
+    air_time_variance_penalty = RewTerm(
+        func=mdp.air_time_variance_penalty,
+        weight=-0.25,  # 仅横移/转向生效，历史时长截断至 0.5 s，不清空。
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+            ),
+            "command_name": "base_velocity",
+            "command_threshold": 0.1,  # sqrt(VY² + yaw²) > 此阈值时启用。
+        },
+    )
     turning_lateral_gait = RewTerm(
         func=mdp.GaitReward,
         weight=0.5,

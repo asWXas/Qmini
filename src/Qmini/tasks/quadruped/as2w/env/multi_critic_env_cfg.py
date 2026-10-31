@@ -12,7 +12,7 @@ REWARD_GROUPS = {
     # 风格：机体运动、动作平滑、步态、轮子布局及能耗。
     "style": (
         "lin_vel_z_l2", "ang_vel_xy_l2", "action_rate_l2", "action_rate_l2_second_order",
-        "feet_air_time", "stand_still_joint_deviation", "wheel_obstacle_clearance",
+        "feet_air_time", "air_time_variance_penalty", "stand_still_joint_deviation", "wheel_obstacle_clearance",
         "diagonal_wheel_distance_difference", "dof_torques_l2", "leg_acc_l2", "wheel_acc_l2",
         "flat_four_wheel_contact", "turning_lateral_gait", "wheel_contact_slip",
     ),

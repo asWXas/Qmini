@@ -19,7 +19,8 @@ def test_multi_critic_registration_and_reward_preservation(terrain):
         'track_lin_vel_xy_exp', 'track_ang_vel_z_exp', 'gravity_z_alignment',
     }
     assert set(grouped.rewards['safety']) == {'undesired_contacts', 'dof_pos_limits', 'dof_torque_limits', 'terminated'}
-    assert {'dof_torques_l2', 'action_rate_l2', 'flat_four_wheel_contact', 'turning_lateral_gait'} <= set(
+    assert {'dof_torques_l2', 'action_rate_l2', 'flat_four_wheel_contact', 'turning_lateral_gait',
+            'air_time_variance_penalty'} <= set(
         grouped.rewards['style']
     )
     original = {k: v for k, v in vars(base.rewards).items() if isinstance(v, RewardTermCfg)}
