@@ -151,6 +151,16 @@ class MySceneCfg(InteractiveSceneCfg):
         debug_vis=False,
     )
     contact_forces = ContactSensorCfg(prim_path="{ENV_REGEX_NS}/Robot/[^/]*", history_length=3, track_air_time=True)
+    # 单轮逐接触点数据；用于静态地形上的切向滑动检测（PhysX）。
+    fl_wheel_contact = ContactSensorCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/FL_foot",
+        filter_prim_paths_expr=["/World/ground/terrain/mesh"],
+        track_contact_points=True,
+        max_contact_data_count_per_prim=64,
+    )
+    fr_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/FR_foot")
+    rl_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/RL_foot")
+    rr_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/RR_foot")
     # lights
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
@@ -364,7 +374,7 @@ class EventsCfg:
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
             "static_friction_range": (0.4, 1.2),
-            "dynamic_friction_range": (0.2, 0.4),
+            "dynamic_friction_range": (0.4, 1.2),
             "restitution_range": (0.0, 0.2),
             "num_buckets": 64,
         },
@@ -484,14 +494,14 @@ class RewardsCfg:
     gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
     flat_four_wheel_contact = RewTerm(
         func=mdp.flat_terrain_four_wheel_contact,
-        weight=0.25,
+        weight=0.5,
         params={
             "height_sensor_cfg": SceneEntityCfg("height_scanner"),
             "contact_sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
             "command_name": "base_velocity",  # CMD 全为零直接启用，否则检查纯 VX 和地形。
-            "height_threshold": 0.3,  # 扫描点全部有效且最高与最低 Z 差 < 10 cm，判为平地。
+            "height_threshold": 0.05,  # 扫描点全部有效且最高与最低 Z 差 < 10 cm，判为平地。
             "pure_vx_tolerance": 1e-2,  # |VY| 和 |偏航指令| 均不超过此容差时启用。
             "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
         },
@@ -546,7 +556,7 @@ class RewardsCfg:
             "command_name": "base_velocity",
             "command_threshold": 0.1,
             "stand_still_scale": 1.5,  # 静止时所有腿关节统一系数。
-            "moving_hip_scale": 0.5,  # 运动时 HIP 偏差系数。
+            "moving_hip_scale": 0.25,  # 运动时 HIP 偏差系数。
             "moving_thigh_scale": 0.25,  # 运动时大腿偏差系数。
             "moving_calf_scale": 0.25,  # 运动时小腿偏差系数。
         },
@@ -560,6 +570,19 @@ class RewardsCfg:
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
             "tolerance": 0.03,  # XY 对角线长度差容差 3 cm，所有地形统一。
+        },
+    )
+
+    wheel_contact_slip = RewTerm(
+        func=mdp.WheelContactSlip,
+        weight=-0.5,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+            ),
+            "sensor_names": ["fl_wheel_contact", "fr_wheel_contact", "rl_wheel_contact", "rr_wheel_contact"],
+            "slip_threshold": 0.05,  # 接触点切向速度超过 5 cm/s 才算打滑。
+            "contact_threshold": 1.0,  # 仅检查法向力 > 1 N 的接触点。
         },
     )
 
@@ -710,3 +733,5 @@ class AS2WFlatEnvCfg(AS2WRoughEnvCfg):
         self.scene.terrain.terrain_generator = None
         self.scene.terrain.max_init_terrain_level = None
         self.curriculum.terrain_levels = None # type: ignore
+        for name in ("fl_wheel_contact", "fr_wheel_contact", "rl_wheel_contact", "rr_wheel_contact"):
+            getattr(self.scene, name).filter_prim_paths_expr = ["/World/ground/terrain/GroundPlane/CollisionPlane"]
