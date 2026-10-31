@@ -17,7 +17,7 @@ REWARD_GROUPS = {
         "flat_four_wheel_contact", "turning_lateral_gait",
     ),
     # 安全：异常接触及关节位置、力矩限位；姿态限位重新启用时也归入此组。
-    "safety": ("undesired_contacts", "dof_pos_limits", "joint_pose_limits", "dof_torque_limits"),
+    "safety": ("undesired_contacts", "dof_pos_limits", "joint_pose_limits", "dof_torque_limits", "terminated"),
 }
 
 

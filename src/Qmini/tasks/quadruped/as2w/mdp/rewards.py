@@ -11,20 +11,21 @@ def flat_terrain_four_wheel_contact(
     env,
     height_sensor_cfg: SceneEntityCfg,
     contact_sensor_cfg: SceneEntityCfg,
-    height_threshold: float = 0.04,
+    height_threshold: float = 0.1,
     contact_threshold: float = 1.0,
     command_name: str = "base_velocity",
     pure_vx_tolerance: float = 1e-3,
 ):
-    """返回四轮未全部着地的惩罚值，需搭配负权重。
+    """返回四轮同时着地的二值奖励，需搭配正权重。
 
-    仅当扫描高度极差小于 height_threshold，且没有横移、转向指令时生效。
-    不限制 VX；零指令同样受地形条件约束。
+    CMD 严格为零时不限制地形；否则仅纯 VX 且扫描高度极差小于
+    height_threshold 时生效，不限制 VX 大小。
     VY 和偏航指令使用 pure_vx_tolerance 判断是否为零。
-    惩罚为未着地轮子的比例：四轮全部接触为 0，全部离地为 1。
+    四轮全部接触时奖励为 1，少任意一轮接触则为 0。
     """
     command = env.command_manager.get_command(command_name)
-    no_lateral_or_yaw = (command[:, 1:3].abs() <= pure_vx_tolerance).all(dim=-1)
+    zero_command = (command[:, :3] == 0.0).all(dim=-1)
+    pure_vx = (command[:, 0] != 0.0) & (command[:, 1:3].abs() <= pure_vx_tolerance).all(dim=-1)
 
     # 平地条件：所有扫描点有效，且世界坐标 Z 的极差严格小于阈值。
     heights = env.scene.sensors[height_sensor_cfg.name].data.ray_hits_w.torch[..., 2]
@@ -32,15 +33,14 @@ def flat_terrain_four_wheel_contact(
     highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
     lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
     flat_terrain = valid.all(dim=-1) & ((highest - lowest) < height_threshold)
-    active = flat_terrain & no_lateral_or_yaw
+    active = zero_command | (flat_terrain & pure_vx)
 
     # 接触条件：每个轮子的接触力范数须大于阈值。
     forces = env.scene.sensors[contact_sensor_cfg.name].data.net_forces_w.torch[:, contact_sensor_cfg.body_ids]
     if forces.shape[1] != 4:
         raise ValueError("Expected exactly four wheel contact bodies")
     in_contact = torch.linalg.vector_norm(forces, dim=-1) > contact_threshold
-    missing_ratio = (~in_contact).to(dtype=heights.dtype).mean(dim=-1)
-    return torch.where(active, missing_ratio, 0.0)
+    return (active & in_contact.all(dim=-1)).to(dtype=heights.dtype)
 
 
 def wheel_obstacle_clearance(
@@ -112,50 +112,40 @@ def stand_still_joint_deviation(
     asset_cfg: SceneEntityCfg,
     command_name: str,
     command_threshold: float = 0.1,
-    stand_still_scale: float = 5.0,
-    moving_scale: float = 1.0,
+    stand_still_scale: float = 1.5,
+    moving_hip_scale: float = 0.25,
+    moving_thigh_scale: float = 0.25,
+    moving_calf_scale: float = 0.25,
 ):
-    """腿部默认姿态 L1 偏差，按完整速度命令模长调整惩罚。"""
+    """默认姿态 L1 偏差：静止统一缩放，运动时按 hip/thigh/calf 分组缩放。"""
     asset = env.scene[asset_cfg.name]
+    joint_ids = asset_cfg.joint_ids
+    selected_ids = list(range(len(asset.joint_names)))[joint_ids] if isinstance(joint_ids, slice) else joint_ids
+    group_scales = {"hip": moving_hip_scale, "thigh": moving_thigh_scale, "calf": moving_calf_scale}
+    groups = [asset.joint_names[index].rsplit("_", 1)[-1] for index in selected_ids]
+    if any(group not in group_scales for group in groups):
+        raise ValueError("Expected only hip, thigh, and calf joints")
     deviation = (
-        (
-            asset.data.joint_pos.torch[:, asset_cfg.joint_ids]
-            - asset.data.default_joint_pos.torch[:, asset_cfg.joint_ids]
-        )
-        .abs()
-        .sum(dim=1)
-    )
+        asset.data.joint_pos.torch[:, joint_ids] - asset.data.default_joint_pos.torch[:, joint_ids]
+    ).abs()
+    moving_scales = deviation.new_tensor([group_scales[group] for group in groups])
     command = env.command_manager.get_command(command_name)
     standing = torch.linalg.vector_norm(command, dim=-1) < command_threshold
-    scale = torch.where(standing, stand_still_scale, moving_scale)
-    return deviation * scale
+    standing_penalty = deviation.sum(dim=-1) * stand_still_scale
+    moving_penalty = (deviation * moving_scales).sum(dim=-1)
+    return torch.where(standing, standing_penalty, moving_penalty)
 
 
-def diagonal_wheel_distance_difference(
-    env,
-    asset_cfg: SceneEntityCfg,
-    height_sensor_cfg: SceneEntityCfg,
-    tolerance: float = 0.03,
-    rough_tolerance: float = 0.05,
-    height_threshold: float = 0.03,
-):
-    """轮心顺序 FL、FR、RL、RR；惩罚 XY 对角线长度差，平地使用 tolerance，否则使用 rough_tolerance。"""
-    if not all(math.isfinite(value) and value >= 0.0 for value in (tolerance, rough_tolerance)):
-        raise ValueError("tolerances must be finite and non-negative")
-    if not math.isfinite(height_threshold) or height_threshold <= 0.0:
-        raise ValueError("height_threshold must be finite and positive")
-    heights = env.scene.sensors[height_sensor_cfg.name].data.ray_hits_w.torch[..., 2]
-    valid = torch.isfinite(heights)
-    highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
-    lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
-    flat = valid.all(dim=-1) & ((highest - lowest) < height_threshold)
-    allowed_difference = torch.where(flat, tolerance, rough_tolerance)
+def diagonal_wheel_distance_difference(env, asset_cfg: SceneEntityCfg, tolerance: float = 0.03):
+    """轮心顺序 FL、FR、RL、RR；惩罚 XY 平面两条对角线长度差超出容差的部分。"""
+    if not math.isfinite(tolerance) or tolerance < 0.0:
+        raise ValueError("tolerance must be finite and non-negative")
     positions = env.scene[asset_cfg.name].data.body_link_pos_w.torch[:, asset_cfg.body_ids, :2]
     if positions.shape[1] != 4:
         raise ValueError("Expected four wheel bodies ordered FL, FR, RL, RR")
     fr_rl = torch.linalg.vector_norm(positions[:, 1] - positions[:, 2], dim=-1)
     fl_rr = torch.linalg.vector_norm(positions[:, 0] - positions[:, 3], dim=-1)
-    return ((fr_rl - fl_rr).abs() - allowed_difference).clamp(min=0.0)
+    return ((fr_rl - fl_rr).abs() - tolerance).clamp(min=0.0)
 
 
 def gravity_z_alignment(env, std: float = 0.5, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):  # noqa: B008

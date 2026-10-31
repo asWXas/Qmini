@@ -464,7 +464,7 @@ class RewardsCfg:
     # -- task
     track_lin_vel_xy_exp = RewTerm(
         func=isaaclab_mdp.track_lin_vel_xy_exp,
-        weight=3.0,
+        weight=2.5,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     track_ang_vel_z_exp = RewTerm(
@@ -473,43 +473,29 @@ class RewardsCfg:
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
 
-    gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
-    
-    # 四轮接触惩罚：横移、转向或扫描高度差过大时不生效；不限制 VX。
-    flat_four_wheel_contact = RewTerm(
-        func=mdp.flat_terrain_four_wheel_contact,
-        weight=-1.0,  # 函数返回非负惩罚值，使用负权重扣分。
-        params={
-            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
-            "contact_sensor_cfg": SceneEntityCfg(
-                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
-            ),
-            "command_name": "base_velocity",  # 只检查 VY 和偏航指令，不限制 VX。
-            "height_threshold": 0.06,  # 扫描点全部有效且最高与最低 Z 差 < 4 cm，判为平地。
-            "pure_vx_tolerance": 1e-3,  # |VY| 和 |偏航指令| 均不超过此容差时启用。
-            "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
-        },
-    )
-
-    turning_lateral_gait = RewTerm(
-        func=mdp.GaitReward,
-        weight=0.5,
-        params={
-            "std": 0.1,
-            "max_err": 0.2,
-            "synced_feet_pair_names": [["FL_foot", "RR_foot"], ["FR_foot", "RL_foot"]],
-            "sensor_cfg": SceneEntityCfg("contact_forces"),
-            "command_name": "base_velocity",
-            "command_threshold": 0.1,
-        },
-    )
-
     # -- penalties
     lin_vel_z_l2 = RewTerm(func=isaaclab_mdp.lin_vel_z_l2, weight=-2.0)
     ang_vel_xy_l2 = RewTerm(func=isaaclab_mdp.ang_vel_xy_l2, weight=-0.05)
 
     action_rate_l2 = RewTerm(func=isaaclab_mdp.action_rate_l2, weight=-0.01)
     action_rate_l2_second_order = RewTerm(func=mdp.action_rate_l2_second_order, weight=-0.01)
+
+
+    gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
+    flat_four_wheel_contact = RewTerm(
+        func=mdp.flat_terrain_four_wheel_contact,
+        weight=0.25,
+        params={
+            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+            "contact_sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+            ),
+            "command_name": "base_velocity",  # CMD 全为零直接启用，否则检查纯 VX 和地形。
+            "height_threshold": 0.1,  # 扫描点全部有效且最高与最低 Z 差 < 10 cm，判为平地。
+            "pure_vx_tolerance": 1e-2,  # |VY| 和 |偏航指令| 均不超过此容差时启用。
+            "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
+        },
+    )
 
     feet_air_time = RewTerm(
         func=mdp.gait_air_time_limits,
@@ -523,6 +509,34 @@ class RewardsCfg:
             "command_threshold": 0.1,
         },
     )
+    turning_lateral_gait = RewTerm(
+        func=mdp.GaitReward,
+        weight=0.5,
+        params={
+            "std": 0.1,
+            "max_err": 0.2,
+            "synced_feet_pair_names": [["FL_foot", "RR_foot"], ["FR_foot", "RL_foot"]],
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+            "command_name": "base_velocity",
+            "command_threshold": 0.1,
+        },
+    )
+
+
+
+    # wheel_obstacle_clearance = RewTerm(
+    #     func=mdp.wheel_obstacle_clearance,
+    #     weight=-5.0,
+    #     params={
+    #         "asset_cfg": SceneEntityCfg(
+    #             "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+    #         ),
+    #         "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
+    #         "wheel_radius": 0.086,
+    #         "clearance": 0.0,
+    #         "obstacle_threshold": 0.03,
+    #     },
+    # )
 
     stand_still_joint_deviation = RewTerm(
         func=mdp.stand_still_joint_deviation,
@@ -531,36 +545,21 @@ class RewardsCfg:
             "asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES),
             "command_name": "base_velocity",
             "command_threshold": 0.1,
-            "stand_still_scale": 1.0,
-            "moving_scale": 0.125,
-        },
-    )
-
-    wheel_obstacle_clearance = RewTerm(
-        func=mdp.wheel_obstacle_clearance,
-        weight=-5.0,
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
-            ),
-            "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
-            "wheel_radius": 0.086,
-            "clearance": 0.0,
-            "obstacle_threshold": 0.03,
+            "stand_still_scale": 1.5,  # 静止时所有腿关节统一系数。
+            "moving_hip_scale": 0.5,  # 运动时 HIP 偏差系数。
+            "moving_thigh_scale": 0.25,  # 运动时大腿偏差系数。
+            "moving_calf_scale": 0.25,  # 运动时小腿偏差系数。
         },
     )
 
     diagonal_wheel_distance_difference = RewTerm(
         func=mdp.diagonal_wheel_distance_difference,
-        weight=-0.4,
+        weight=-0.1,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
-            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
-            "height_threshold": 0.03,  # 扫描高度极差 < 3 cm 为平地。
-            "tolerance": 0.03,  # 平地：XY 对角线长度差容差 3 cm。
-            "rough_tolerance": 0.05,  # 非平地：容差放宽至 5 cm。
+            "tolerance": 0.03,  # XY 对角线长度差容差 3 cm，所有地形统一。
         },
     )
 
@@ -572,7 +571,7 @@ class RewardsCfg:
     )
     wheel_acc_l2 = RewTerm(
         func=isaaclab_mdp.joint_acc_l2,
-        weight=-2.5e-7,
+        weight=-1.0e-9,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=WHEEL_JOINT_NAMES)},
     )
 
@@ -601,6 +600,9 @@ class RewardsCfg:
         weight=-0.01,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES + WHEEL_JOINT_NAMES)},
     )
+
+    # 非正常终止权重 -100，实际扣分为 100 * step_dt；正常超时不扣分。
+    terminated = RewTerm(func=isaaclab_mdp.is_terminated, weight=-100.0)
 
 
 @configclass

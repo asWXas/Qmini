@@ -18,7 +18,7 @@ def test_multi_critic_registration_and_reward_preservation(terrain):
     assert set(grouped.rewards['task']) == {
         'track_lin_vel_xy_exp', 'track_ang_vel_z_exp', 'gravity_z_alignment',
     }
-    assert set(grouped.rewards['safety']) == {'undesired_contacts', 'dof_pos_limits', 'dof_torque_limits'}
+    assert set(grouped.rewards['safety']) == {'undesired_contacts', 'dof_pos_limits', 'dof_torque_limits', 'terminated'}
     assert {'dof_torques_l2', 'action_rate_l2', 'flat_four_wheel_contact', 'turning_lateral_gait'} <= set(
         grouped.rewards['style']
     )
@@ -38,3 +38,19 @@ def test_unassigned_reward_rejected():
     from types import SimpleNamespace
     with pytest.raises(ValueError, match='unassigned'):
         group_rewards(SimpleNamespace(new_term=RewardTermCfg(func=lambda env: 0, weight=1.0)))
+
+
+@pytest.mark.parametrize('step_dt', [.01, .02, .04])
+def test_abnormal_termination_cost_scales_with_dt(step_dt):
+    from types import SimpleNamespace as N
+    import torch
+    from Qmini.tasks.quadruped.as2w.env.as2w_env_cfg import RewardsCfg
+
+    # Running, abnormal termination, normal timeout, and abnormal termination at timeout.
+    env = N(step_dt=step_dt, termination_manager=N(
+        terminated=torch.tensor([False, True, False, True]),
+        time_outs=torch.tensor([False, False, True, True]),
+    ))
+    term = RewardsCfg().terminated
+    actual = term.func(env, **term.params) * term.weight * step_dt
+    torch.testing.assert_close(actual, torch.tensor([0., -100., 0., -100.]) * step_dt)
