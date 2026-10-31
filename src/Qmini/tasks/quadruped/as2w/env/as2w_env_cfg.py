@@ -158,9 +158,9 @@ class MySceneCfg(InteractiveSceneCfg):
         track_contact_points=True,
         max_contact_data_count_per_prim=64,
     )
-    fr_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/FR_foot")
-    rl_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/RL_foot")
-    rr_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/RR_foot")
+    fr_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/FR_foot") # type: ignore
+    rl_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/RL_foot") # type: ignore
+    rr_wheel_contact = fl_wheel_contact.replace(prim_path="{ENV_REGEX_NS}/Robot/RR_foot") # type: ignore
     # lights
     sky_light = AssetBaseCfg(
         prim_path="/World/skyLight",
@@ -501,7 +501,7 @@ class RewardsCfg:
                 "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
             "command_name": "base_velocity",  # CMD 全为零直接启用，否则检查纯 VX 和地形。
-            "height_threshold": 0.05,  # 扫描点全部有效且最高与最低 Z 差 < 10 cm，判为平地。
+            "height_threshold": 0.05,  # 非零纯 VX 时，扫描点须全部有效且最高与最低 Z 差 < 5 cm。
             "pure_vx_tolerance": 1e-2,  # |VY| 和 |偏航指令| 均不超过此容差时启用。
             "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
         },
@@ -556,7 +556,7 @@ class RewardsCfg:
             "command_name": "base_velocity",
             "command_threshold": 0.1,
             "stand_still_scale": 1.5,  # 静止时所有腿关节统一系数。
-            "moving_hip_scale": 0.25,  # 运动时 HIP 偏差系数。
+            "moving_hip_scale": 0.4,  # 运动时 HIP 偏差系数。
             "moving_thigh_scale": 0.25,  # 运动时大腿偏差系数。
             "moving_calf_scale": 0.25,  # 运动时小腿偏差系数。
         },
