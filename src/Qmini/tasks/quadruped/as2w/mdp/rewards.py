@@ -136,16 +136,31 @@ def stand_still_joint_deviation(
     return deviation * scale
 
 
-def diagonal_wheel_distance_difference(env, asset_cfg: SceneEntityCfg, tolerance: float = 0.03):
-    """轮心顺序 FL、FR、RL、RR；惩罚世界坐标系 XY 平面内两条对角线长度差超出容差的部分。"""
-    if tolerance < 0.0:
-        raise ValueError("tolerance must be non-negative")
+def diagonal_wheel_distance_difference(
+    env,
+    asset_cfg: SceneEntityCfg,
+    height_sensor_cfg: SceneEntityCfg,
+    tolerance: float = 0.03,
+    rough_tolerance: float = 0.05,
+    height_threshold: float = 0.03,
+):
+    """轮心顺序 FL、FR、RL、RR；惩罚 XY 对角线长度差，平地使用 tolerance，否则使用 rough_tolerance。"""
+    if not all(math.isfinite(value) and value >= 0.0 for value in (tolerance, rough_tolerance)):
+        raise ValueError("tolerances must be finite and non-negative")
+    if not math.isfinite(height_threshold) or height_threshold <= 0.0:
+        raise ValueError("height_threshold must be finite and positive")
+    heights = env.scene.sensors[height_sensor_cfg.name].data.ray_hits_w.torch[..., 2]
+    valid = torch.isfinite(heights)
+    highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
+    lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
+    flat = valid.all(dim=-1) & ((highest - lowest) < height_threshold)
+    allowed_difference = torch.where(flat, tolerance, rough_tolerance)
     positions = env.scene[asset_cfg.name].data.body_link_pos_w.torch[:, asset_cfg.body_ids, :2]
     if positions.shape[1] != 4:
         raise ValueError("Expected four wheel bodies ordered FL, FR, RL, RR")
     fr_rl = torch.linalg.vector_norm(positions[:, 1] - positions[:, 2], dim=-1)
     fl_rr = torch.linalg.vector_norm(positions[:, 0] - positions[:, 3], dim=-1)
-    return ((fr_rl - fl_rr).abs() - tolerance).clamp(min=0.0)
+    return ((fr_rl - fl_rr).abs() - allowed_difference).clamp(min=0.0)
 
 
 def gravity_z_alignment(env, std: float = 0.5, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")):  # noqa: B008

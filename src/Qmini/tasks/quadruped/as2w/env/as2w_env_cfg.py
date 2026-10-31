@@ -573,7 +573,10 @@ class RewardsCfg:
             "asset_cfg": SceneEntityCfg(
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
-            "tolerance": 0.03,
+            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+            "height_threshold": 0.03,  # 扫描高度极差 < 3 cm 为平地。
+            "tolerance": 0.03,  # 平地：XY 对角线长度差容差 3 cm。
+            "rough_tolerance": 0.05,  # 非平地：容差放宽至 5 cm。
         },
     )
 
