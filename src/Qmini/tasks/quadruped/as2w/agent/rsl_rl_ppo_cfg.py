@@ -46,7 +46,7 @@ class AS2WRoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 @configclass
 class AS2WFlatPPORunnerCfg(AS2WRoughPPORunnerCfg):
     def __post_init__(self):
-        super().__post_init__()
+        super().__post_init__() # type: ignore
 
         self.max_iterations = 1000
         self.experiment_name = "as2w_flat"
