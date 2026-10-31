@@ -16,7 +16,7 @@ STAIRS_CFG = StairCategoryCfg(
     proportion=0.50,
     shapes={"right_angle": 1 / 3, "slanted": 1 / 3, "rounded": 1 / 3},
     directions={"up": 0.5, "down": 0.5},
-    step_height_range=(0.05, 0.23),
+    step_height_range=(0.02, 0.1),
     step_width=0.3,
     platform_width=3.0,
     border_width=1.0,
@@ -45,21 +45,21 @@ ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
     use_cache=False,
     sub_terrains={
         **STAIRS_CFG.build(),
-        **SLOPES_CFG.build(),
-        "boxes": terrain_gen.MeshRandomGridTerrainCfg(
-            proportion=0.1,
-            grid_width=0.45,
-            grid_height_range=(0.05, 0.2),
-            platform_width=2.0,
-        ),
-        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.1, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.25
-        ),
-        "waves": terrain_gen.HfWaveTerrainCfg(
-            proportion=0.10,
-            amplitude_range=(0.02, 0.10),
-            num_waves=3,
-            border_width=0.25,
-        )
+        # **SLOPES_CFG.build(),
+        # "boxes": terrain_gen.MeshRandomGridTerrainCfg(
+        #     proportion=0.1,
+        #     grid_width=0.45,
+        #     grid_height_range=(0.05, 0.2),
+        #     platform_width=2.0,
+        # ),
+        # "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+        #     proportion=0.1, noise_range=(0.02, 0.10), noise_step=0.02, border_width=0.25
+        # ),
+        # "waves": terrain_gen.HfWaveTerrainCfg(
+        #     proportion=0.10,
+        #     amplitude_range=(0.02, 0.10),
+        #     num_waves=3,
+        #     border_width=0.25,
+        # )
     },
 )

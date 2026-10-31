@@ -11,25 +11,20 @@ def flat_terrain_four_wheel_contact(
     env,
     height_sensor_cfg: SceneEntityCfg,
     contact_sensor_cfg: SceneEntityCfg,
-    height_threshold: float = 0.03,
+    height_threshold: float = 0.04,
     contact_threshold: float = 1.0,
     command_name: str = "base_velocity",
     pure_vx_tolerance: float = 1e-3,
-    vx_threshold: float = 0.75,
 ):
     """返回四轮未全部着地的惩罚值，需搭配负权重。
 
-    CMD 全为零时，任何地形均生效；否则仅在扫描高度极差小于
-    height_threshold、只有 VX 且 0 < |VX| < vx_threshold 时生效。
+    仅当扫描高度极差小于 height_threshold，且没有横移、转向指令时生效。
+    不限制 VX；零指令同样受地形条件约束。
     VY 和偏航指令使用 pure_vx_tolerance 判断是否为零。
     惩罚为未着地轮子的比例：四轮全部接触为 0，全部离地为 1。
     """
-    # 指令条件：严格零指令，或低速纯前进/后退指令。
     command = env.command_manager.get_command(command_name)
-    vx, vy, yaw = command[:, 0], command[:, 1], command[:, 2]
-    zero_command = (vx == 0.0) & (vy == 0.0) & (yaw == 0.0)
-    only_vx = (vx.abs() > 0.0) & (vy.abs() <= pure_vx_tolerance) & (yaw.abs() <= pure_vx_tolerance)
-    low_speed_vx = only_vx & (vx.abs() < vx_threshold)
+    no_lateral_or_yaw = (command[:, 1:3].abs() <= pure_vx_tolerance).all(dim=-1)
 
     # 平地条件：所有扫描点有效，且世界坐标 Z 的极差严格小于阈值。
     heights = env.scene.sensors[height_sensor_cfg.name].data.ray_hits_w.torch[..., 2]
@@ -37,7 +32,7 @@ def flat_terrain_four_wheel_contact(
     highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
     lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
     flat_terrain = valid.all(dim=-1) & ((highest - lowest) < height_threshold)
-    active = zero_command | (flat_terrain & low_speed_vx)
+    active = flat_terrain & no_lateral_or_yaw
 
     # 接触条件：每个轮子的接触力范数须大于阈值。
     forces = env.scene.sensors[contact_sensor_cfg.name].data.net_forces_w.torch[:, contact_sensor_cfg.body_ids]

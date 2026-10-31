@@ -282,30 +282,7 @@ class ObservationsCfg:
             clip=(-1.5, 1.5),
         )
 
-        fl_wheel_scan = ObsTerm(
-            func=isaaclab_mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("fl_wheel_scanner"), "offset": 0.0},
-            scale=1.0,
-            clip=(-1.5, 1.5),
-        )
-        fr_wheel_scan = ObsTerm(
-            func=isaaclab_mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("fr_wheel_scanner"), "offset": 0.0},
-            scale=1.0,
-            clip=(-1.5, 1.5),
-        )
-        rl_wheel_scan = ObsTerm(
-            func=isaaclab_mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("rl_wheel_scanner"), "offset": 0.0},
-            scale=1.0,
-            clip=(-1.5, 1.5),
-        )
-        rr_wheel_scan = ObsTerm(
-            func=isaaclab_mdp.height_scan,
-            params={"sensor_cfg": SceneEntityCfg("rr_wheel_scanner"), "offset": 0.0},
-            scale=1.0,
-            clip=(-1.5, 1.5),
-        )
+
 
         # 轮子状态（FL、FR、RL、RR）
         wheel_air_time = ObsTerm(
@@ -316,6 +293,14 @@ class ObservationsCfg:
                     "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
                 )
             },
+        )
+        wheel_scan_height_range = ObsTerm(
+            func=mdp.wheel_scan_height_range,
+            params={
+                "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
+            },
+            scale=1.0,
+            clip=(0.0, 1.5),
         )
         wheel_contact = ObsTerm(
             func=mdp.feet_contact_state,
@@ -479,37 +464,36 @@ class RewardsCfg:
     # -- task
     track_lin_vel_xy_exp = RewTerm(
         func=isaaclab_mdp.track_lin_vel_xy_exp,
-        weight=1.5,
+        weight=3.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
     track_ang_vel_z_exp = RewTerm(
         func=isaaclab_mdp.track_ang_vel_z_exp,
-        weight=1.25,
+        weight=1.5,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
 
     gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
     
-    # 四轮接触惩罚：零指令时任何地形生效；非零指令仅在平地低速纯 VX 时生效。
+    # 四轮接触惩罚：横移、转向或扫描高度差过大时不生效；不限制 VX。
     flat_four_wheel_contact = RewTerm(
         func=mdp.flat_terrain_four_wheel_contact,
-        weight=-0.5,  # 函数返回非负惩罚值，使用负权重扣分。
+        weight=-1.0,  # 函数返回非负惩罚值，使用负权重扣分。
         params={
             "height_sensor_cfg": SceneEntityCfg("height_scanner"),
             "contact_sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
-            "command_name": "base_velocity",  # VX、VY、偏航指令全为 0 时直接启用。
-            "height_threshold": 0.03,  # 扫描点全部有效且最高与最低 Z 差 < 3 cm，判为平地。
-            "pure_vx_tolerance": 1e-3,  # 纯 VX：|VY| 和 |偏航指令| 均不超过此容差。
-            "vx_threshold": 0.75,  # 非零指令要求 0 < |VX| < 此值，单位 m/s。
+            "command_name": "base_velocity",  # 只检查 VY 和偏航指令，不限制 VX。
+            "height_threshold": 0.06,  # 扫描点全部有效且最高与最低 Z 差 < 4 cm，判为平地。
+            "pure_vx_tolerance": 1e-3,  # |VY| 和 |偏航指令| 均不超过此容差时启用。
             "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
         },
     )
 
     turning_lateral_gait = RewTerm(
         func=mdp.GaitReward,
-        weight=0.75,
+        weight=0.5,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -529,7 +513,7 @@ class RewardsCfg:
 
     feet_air_time = RewTerm(
         func=mdp.gait_air_time_limits,
-        weight=-0.5,
+        weight=-0.25,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
@@ -542,19 +526,19 @@ class RewardsCfg:
 
     stand_still_joint_deviation = RewTerm(
         func=mdp.stand_still_joint_deviation,
-        weight=-0.1,
+        weight=-1.0,
         params={
             "asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES),
             "command_name": "base_velocity",
             "command_threshold": 0.1,
-            "stand_still_scale": 5.0,
-            "moving_scale": 0.75,
+            "stand_still_scale": 1.0,
+            "moving_scale": 0.125,
         },
     )
 
     wheel_obstacle_clearance = RewTerm(
         func=mdp.wheel_obstacle_clearance,
-        weight=-1.0,
+        weight=-5.0,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
@@ -568,7 +552,7 @@ class RewardsCfg:
 
     diagonal_wheel_distance_difference = RewTerm(
         func=mdp.diagonal_wheel_distance_difference,
-        weight=-1.0,
+        weight=-0.4,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
@@ -698,7 +682,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 5
             self.scene.terrain.terrain_generator.num_cols = 5
-            # self.scene.terrain.terrain_generator.curriculum = False
+            self.scene.terrain.terrain_generator.curriculum = False
         # remove random pushing events
         self.events.base_external_force_torque = None
         self.events.push_robot = None

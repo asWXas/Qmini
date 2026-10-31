@@ -11,6 +11,20 @@ from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab_newton.physics import NewtonCfg
 
 
+
+def wheel_scan_height_range(env, sensor_names: list[str]):
+    """每个轮子九个扫描点的 Z 极差，按传入顺序返回 (num_envs, 4)，单位米。
+
+    扫描缺失时返回 1.5 m，避免将未知地形当作平地或输出 NaN。
+    """
+    ranges = []
+    for name in sensor_names:
+        heights = env.scene.sensors[name].data.ray_hits_w.torch[..., 2]
+        height_range = heights.amax(dim=-1) - heights.amin(dim=-1)
+        ranges.append(torch.where(torch.isfinite(heights).all(dim=-1), height_range, 1.5))
+    return torch.stack(ranges, dim=-1)
+
+
 def action_history(env):
     """Last two issued actions, ordered [a(t-1), a(t-2)]; reset rows are zeroed."""
     return torch.cat((env.action_manager.action, env.action_manager.prev_action), dim=-1)
