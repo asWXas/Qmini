@@ -24,7 +24,7 @@ def multi_critic_algorithm(base):
 @configclass
 class AS2WRoughMultiCriticRunnerCfg(AS2WRoughPPORunnerCfg):
     def __post_init__(self):
-        super().__post_init__()
+        super().__post_init__() # type: ignore
         self.experiment_name = "as2w_rough_multi_critic"
         self.algorithm = multi_critic_algorithm(self.algorithm)
 
