@@ -75,7 +75,7 @@ class UMVFlatEnvCfg_PLAY(UMVFlatEnvCfg):
         self.scene.env_spacing = 2.5
         # Evaluation samples all skills without advancing the training curriculum.
         if self.curriculum is not None:
-            self.curriculum.linerides_skills = None
+            self.curriculum.linerides_skills = None # type: ignore
         self.commands.linerides.skill_sampling_weights = (1.0, 1.0, 1.0)
         # 评估时不注入观测噪声
         self.observations.policy.enable_corruption = False
