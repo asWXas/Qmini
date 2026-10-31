@@ -11,6 +11,7 @@ logs/
 outputs/
 videos/
 wandb/
+*.log
 
 .vscode/settings.json
 .vscode/launch.json

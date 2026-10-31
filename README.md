@@ -2,14 +2,14 @@
 
 An installable downstream Isaac Lab task package with a standard uv `src` layout.
 
-The registered tasks are:
-- `Qmini-Balance-Cartpole`
+The package registers the Balance, Qmini/GR1T, UMV, TCN, DreamWaQ, HIMLoco, and Multi-Critic task variants.
+All task configurations use the concrete Isaac Sim PhysX backend.
 
 
 ## Installation
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create the project environment. The default
-environment uses the Newton backend and does not install Isaac Sim:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then create the project environment. Isaac Sim
+and RSL-RL are installed by default because every task in this package uses Isaac Sim PhysX:
 
 ```bash
 uv sync
@@ -23,11 +23,7 @@ rendering, visualizer, RL, teleoperation, and development features. Inspect `pyp
 pass each required extra to `uv run`:
 
 ```bash
-# Standalone OV PhysX
-uv run --extra ovphysx isaaclab random_agent --task <TASK_NAME> physics=ovphysx
-
-# Isaac Sim with PhysX and RTX rendering
-uv run --extra isaacsim isaaclab random_agent --task <TASK_NAME> physics=isaacsim_physx
+uv run isaaclab random_agent --task <TASK_NAME>
 
 # Isaac Sim with the Rerun visualizer
 uv run --extra isaacsim --extra rerun isaaclab random_agent --task <TASK_NAME> --viz rerun
@@ -61,13 +57,30 @@ uv run isaaclab benchmark runtime --task <TASK_NAME> --num_envs 16 --num_steps 1
 uv run isaaclab benchmark training --rl_library <RL_LIBRARY> --task <TASK_NAME> --max_iterations 10
 ```
 
-Use `physics=<PRESET>` to select one of the presets shown by `isaaclab list_envs`.
+The tasks intentionally do not expose a physics preset: `PhysxCfg` is fixed in each environment configuration.
 
 ## Project structure
 
-Task families live in `src/Qmini/tasks`. Within a manager-based family, task-wide MDP terms live in `mdp`, while
-robot-specific scenes, registrations, and agent configurations live in `config/cartpole`. Add another robot by
-creating a sibling of `config/cartpole`; add another task by creating a sibling task-family directory.
+Tasks live in `src/Qmini/tasks`, grouped by robot category:
+
+```text
+tasks/
+├── humanoid/                  # 人形 / 双足
+│   ├── gr1t/
+│   ├── gr1t_multi_critic/
+│   └── qmini/
+├── creative/                  # 创造类
+│   └── umv/
+├── manipulation/              # 机械臂操作
+│   ├── so101/
+│   └── openarm/
+└── quadruped/                 # 四足（预留，尚无任务）
+```
+
+Each robot package keeps its environment configurations, `mdp` terms, agents, and Gym registrations.
+Add new robot packages under the appropriate category with an `__init__.py` to enable automatic discovery.
+Task IDs and training commands remain unchanged. Python imports use the categorized paths, for example
+`Qmini.tasks.humanoid.gr1t` and `Qmini.tasks.manipulation.openarm`.
 
 ## Project assets
 
@@ -83,6 +96,53 @@ robot_usd_path = QMINI_ASSETS_DIR / "robots" / "my_robot.usd"
 Keep asset configuration in the `Qmini.assets` package and pass `str(robot_usd_path)` to configuration fields that
 expect a string. USD files are configured for Git LFS by the project's `.gitattributes`; install Git LFS before adding
 large binary assets.
+
+### Unitree AS2W
+
+The original URDF, all 18 STL meshes, upstream license, and pinned source manifest live in
+`src/Qmini/assets/data/as2w_description`. Source:
+[Unitree unitree_ros](https://github.com/unitreerobotics/unitree_ros/tree/3ae893d905d11795ddf1075825ee5010364a1109/robots/as2w_description).
+Mesh paths are relative to the URDF; no ROS package setup is required.
+
+```python
+from Qmini.assets.as2w import AS2W_CFG
+
+robot = AS2W_CFG.replace(prim_path="{ENV_REGEX_NS}/Robot")
+```
+
+The PhysX configuration uses 12 position-controlled leg joints and 4 velocity-controlled wheels.
+Use `JointPositionActionCfg` for `.*_(hip|thigh|calf)` (with `use_default_offset=True`) and
+`JointVelocityActionCfg` for `.*_foot`. Wheel position stiffness is zero. Joint effort and velocity
+limits match the URDF; PD gains and the initial pose are starting values requiring simulation tuning.
+The `JT128` fixed link is preserved. This adds an asset configuration, not a registered training task.
+
+### AS2W training
+
+Registered tasks: `Qmini-Velocity-Rough-AS2W` and `Qmini-Velocity-Flat-AS2W`.
+Both support Isaac Sim PhysX and Newton (default) with AS2W explicit ideal PD. Flat terrain retains
+all scan observations so the input layout stays consistent.
+
+```bash
+# PPO (rough terrain by default)
+bash scripts/train_as2w.sh
+# Select a physics backend
+bash scripts/train_as2w.sh --physics isaacsim_physx
+bash scripts/train_as2w.sh --physics newton
+# Small startup/training check
+bash scripts/train_as2w.sh --num_envs 16 --max_iterations 2
+# Flat-terrain PPO
+bash scripts/train_as2w.sh --task Qmini-Velocity-Flat-AS2W
+# Distillation: use a teacher trained on the same task/configuration
+bash scripts/distill_as2w.sh /absolute/path/to/model.pt
+# Playback
+bash scripts/play_as2w.sh --checkpoint /absolute/path/to/model.pt
+```
+
+For flat-terrain distillation or playback, also pass `--task Qmini-Velocity-Flat-AS2W`.
+For student playback, pass `--agent rsl_rl_distillation_cfg_entry_point`.
+Scripts forward extra Isaac Lab options and Hydra overrides. PPO logs are under
+`logs/rsl_rl/as2w_rough` or `logs/rsl_rl/as2w_flat`; distillation uses the corresponding
+`_distillation` experiment directory. No teacher checkpoint is bundled.
 
 ## Development
 

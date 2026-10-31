@@ -1,0 +1,82 @@
+"""Command gating and diagonal synchronization checks."""
+
+from types import SimpleNamespace as N
+
+import torch
+
+from Qmini.tasks.quadruped.as2w.env.as2w_env_cfg import RewardsCfg
+from Qmini.tasks.quadruped.as2w.mdp.rewards import GaitReward
+
+
+def test_gait_command_gate_and_pair_timing():
+    commands = torch.tensor(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 0.2, 0.0],
+            [0.0, -0.2, 0.0],
+            [0.0, 0.0, 0.2],
+            [0.0, 0.0, -0.2],
+            [1.0, 0.2, 0.2],
+            [0.0, 0.08, 0.08],
+            [0.0, 0.1, 0.0],
+        ]
+    )
+    names = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
+    air = torch.tensor([[0.1, 0.0, 0.0, 0.1]]).repeat(len(commands), 1)
+    contact = 0.1 - air
+    sensor = N(
+        cfg=N(track_air_time=True),
+        data=N(current_air_time=N(torch=air), current_contact_time=N(torch=contact)),
+        find_sensors=lambda pair: ([names.index(name) for name in pair], pair),
+    )
+    env = N(scene=N(sensors={"contact_forces": sensor}), command_manager=N(get_command=lambda name: commands))
+    cfg = RewardsCfg().turning_lateral_gait
+    term = GaitReward(cfg, env)
+    expected = torch.tensor([0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0])
+    torch.testing.assert_close(term(env, **cfg.params), expected)
+    # Breaking one synchronized diagonal reduces the active reward.
+    air[:, 0] = 0.0
+    contact[:, 0] = 0.1
+    result = term(env, **cfg.params)
+    assert (result[expected == 1] < 1).all()
+    assert (result[expected == 0] == 0).all()
+
+
+def test_air_time_limits():
+    from isaaclab.managers import SceneEntityCfg
+
+    from Qmini.tasks.quadruped.as2w.mdp.rewards import gait_air_time_limits
+
+    # Too short, in range, too long at landing, ongoing timeout, reset contact, pure VX.
+    last = torch.tensor([[0.05], [0.25], [0.45], [0.0], [0.0], [0.05]])
+    current = torch.tensor([[0.0], [0.0], [0.0], [0.5], [0.0], [0.0]])
+    landed = torch.tensor([[True], [True], [True], [False], [True], [True]])
+    commands = torch.tensor([[0.0, 0.2, 0.0]] * 5 + [[1.0, 0.0, 0.0]])
+    sensor = N(
+        data=N(last_air_time=N(torch=last), current_air_time=N(torch=current)),
+        compute_first_contact=lambda dt: N(torch=landed),
+    )
+    env = N(
+        scene=N(sensors={"contact_forces": sensor}),
+        step_dt=0.02,
+        command_manager=N(get_command=lambda name: commands),
+    )
+    result = gait_air_time_limits(env, SceneEntityCfg("contact_forces", body_ids=[0]))
+    torch.testing.assert_close(result, torch.tensor([0.1, 0.0, 0.0, 0.15, 0.0, 0.0]))
+    # An active swing must not be penalized as too short before it lands.
+    current[0] = 0.05
+    landed[0] = False
+    assert gait_air_time_limits(env, SceneEntityCfg("contact_forces", body_ids=[0]))[0] == 0
+    for duration, penalty in ((0.35, 0.0), (0.36, 0.01), (0.40, 0.05)):
+        current[0] = duration
+        result = gait_air_time_limits(env, SceneEntityCfg("contact_forces", body_ids=[0]))
+        torch.testing.assert_close(result[0], torch.tensor(penalty))
+
+    commands[0] = torch.tensor([0.0, 0.08, 0.08])
+    current[0] = 0.40
+    result = gait_air_time_limits(env, SceneEntityCfg("contact_forces", body_ids=[0]))
+    torch.testing.assert_close(result[0], torch.tensor(0.05))
+    commands[0] = torch.tensor([0.0, 0.1, 0.0])
+    assert gait_air_time_limits(env, SceneEntityCfg("contact_forces", body_ids=[0]))[0] == 0

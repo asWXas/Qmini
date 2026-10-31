@@ -1,0 +1,28 @@
+{
+  "repository": "https://github.com/unitreerobotics/unitree_ros",
+  "commit": "3ae893d905d11795ddf1075825ee5010364a1109",
+  "source_directory": "robots/as2w_description/",
+  "local_modifications": false,
+  "files": {
+    "LICENSE": "6dfdadaa90baa4f7bea7400d3c4e8b9c784ae37f",
+    "as2w.urdf": "b1e34dedf1a107b539d5ce620aae3a3bfa3d29b0",
+    "meshes/FL_calf.STL": "af77a2696c28cc780901cbbcaa32ccd238dc477e",
+    "meshes/FL_foot.STL": "d86ad38bd1cd7e0632b4f63f422f5c7af55e9934",
+    "meshes/FL_hip.STL": "4389ef9a82dcd1ec9223a0f9016bdd28bb78678a",
+    "meshes/FL_thigh.STL": "3347a484f22da7642b4a6c3ad2972ef405630176",
+    "meshes/FR_calf.STL": "2830cead53d2735860919f0c67dbe2a422a81f76",
+    "meshes/FR_foot.STL": "75cf1570d8736d3b91521d277518ae32da1f16ff",
+    "meshes/FR_hip.STL": "25cc1ffccbe0c3cf2b4fcda4472b769bb79549d8",
+    "meshes/FR_thigh.STL": "a7ae79594050ffd5e05c4524f082cfbcad4e5509",
+    "meshes/JT128.STL": "95d758a8fab78c972a3c7c9c7c8952c2616284dc",
+    "meshes/RL_calf.STL": "6f3c973e6085abef2fff88439a1162a01ab48a38",
+    "meshes/RL_foot.STL": "f34b301f3a48574b15d07301e6e51fd4f30671f5",
+    "meshes/RL_hip.STL": "8f70c1017c5a4f922a3684c6a1d5f095c336b787",
+    "meshes/RL_thigh.STL": "c80b3b85ef7abb36dcb446fda7f87d344c5386ae",
+    "meshes/RR_calf.STL": "48dff135d7573fec413467c577c3acbc946ee997",
+    "meshes/RR_foot.STL": "c8da93b4cf25dc057dbc36b12ab44e3958fa2f25",
+    "meshes/RR_hip.STL": "1bc13e6e82a046d4e54cb0e383cfe927bba3a212",
+    "meshes/RR_thigh.STL": "3b2185cc8beb586315561bb811a39cb1f17f0842",
+    "meshes/base_link.STL": "855371a5d922f27720a0cc75b6d838aececde622"
+  }
+}
