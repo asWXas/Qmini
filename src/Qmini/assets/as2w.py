@@ -69,7 +69,7 @@ AS2W_CFG = ArticulationCfg(
             joint_effort_limit=60.0,
             joint_velocity_limit=25.0,
             stiffness=60.0,
-            damping=1.5,
+            damping=2.0,
         ),
         "calves": IdealPDActuatorCfg(
             joint_names_expr=[".*_calf"],
@@ -78,7 +78,7 @@ AS2W_CFG = ArticulationCfg(
             joint_effort_limit=90.0,
             joint_velocity_limit=16.67,
             stiffness=60.0,
-            damping=1.5,
+            damping=2.0,
         ),
         "wheels": IdealPDActuatorCfg(
             joint_names_expr=[".*_foot"],
