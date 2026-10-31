@@ -13,12 +13,13 @@ def flat_terrain_four_wheel_contact(
     contact_sensor_cfg: SceneEntityCfg,
     height_threshold: float = 0.03,
     contact_threshold: float = 1.0,
-    std: float = 0.25,
     command_name: str = "base_velocity",
     standing_threshold: float = 0.1,
     pure_vx_tolerance: float = 1e-3,
+    vx_threshold: float = 0.5,
+    std: float = 0.2,
 ):
-    """站立或平坦地形纯 VX 指令下奖励四轮接触比例。"""
+    """站立或平坦低速纯 VX 时按接触比例奖励，其他情况返回 0。"""
     if not math.isfinite(std) or std <= 0:
         raise ValueError("std must be finite and positive")
     heights = env.scene.sensors[height_sensor_cfg.name].data.ray_hits_w.torch[..., 2]
@@ -34,7 +35,7 @@ def flat_terrain_four_wheel_contact(
     reward = torch.exp(-(1.0 - contact_ratio) / std)
     command = env.command_manager.get_command(command_name)
     standing = torch.linalg.vector_norm(command[:, :3], dim=-1) < standing_threshold
-    pure_vx = (command[:, 0].abs() > pure_vx_tolerance) & (
+    pure_vx = (command[:, 0].abs() < vx_threshold) & (
         command[:, 1:3].abs() <= pure_vx_tolerance
     ).all(dim=-1)
     return torch.where(standing | (flat & pure_vx), reward, 0.0)

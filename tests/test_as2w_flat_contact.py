@@ -19,32 +19,38 @@ def test_flat_contact_gate():
         'scan': N(data=N(ray_hits_w=N(torch=hits))),
         'contact': N(data=N(net_forces_w=N(torch=forces))),
     }))
-    commands = torch.tensor([[1., 0., 0.]]).repeat(7, 1)
+    commands = torch.tensor([[0.3, 0., 0.]]).repeat(7, 1)
     env.command_manager = N(get_command=lambda name: commands)
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-    torch.testing.assert_close(result, torch.tensor([1., 0., torch.exp(torch.tensor(-1.)).item(), 0., 0., 0., 1.]))
+    torch.testing.assert_close(result, torch.tensor([1., 0., 0.2865048, 0., 0., 0., 1.]))
     for count in range(5):
         forces[0] = 0
         forces[0, :count, 2] = 10
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        torch.testing.assert_close(result[0], torch.exp(torch.tensor(float(count - 4))))
+        torch.testing.assert_close(result[0], torch.exp(torch.tensor(-(1.0 - count / 4.0) / 0.2)))
+    forces[:, 0, 2] = 0
+    missing_one = torch.exp(torch.tensor(-1.25))
     # Rough terrain: the complete command norm, including yaw, gates standing.
     for command, expected in (([0., 0., 0.], 1.), ([0.05, 0.05, 0.05], 1.),
                               ([0.08, 0.08, 0.], 0.), ([0., 0., 0.1], 0.)):
         commands[1] = torch.tensor(command)
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        assert result[1] == expected
+        torch.testing.assert_close(result[1], expected * missing_one)
     commands[4] = 0
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-    assert result[4] == 1  # Standing does not depend on scan validity.
+    torch.testing.assert_close(result[4], missing_one)  # Standing does not depend on scan validity.
     # Flat terrain allows forward/backward motion, but not lateral/yaw/mixed commands.
     for command, expected in (
-        ([1., 0., 0.], 1.), ([-1., 0., 0.], 1.),
+        ([1., 0., 0.], 0.), ([-1., 0., 0.], 0.),
+        ([0.5, 0., 0.], 0.), ([-0.5, 0., 0.], 0.),
+        ([0.49, 0., 0.], 1.), ([-0.49, 0., 0.], 1.),
+        ([0.15, 0., 0.], 1.), ([0.2, 0., 0.], 1.),
+        ([0.21, 0., 0.], 1.), ([-0.21, 0., 0.], 1.),
         ([0., 0.2, 0.], 0.), ([0., 0., -0.2], 0.),
         ([1., 0.2, 0.], 0.), ([1., 0., 0.2], 0.),
-        ([1., 0.001, -0.001], 1.), ([1., 0.002, 0.], 0.),
+        ([0.3, 0.001, -0.001], 1.), ([0.3, 0.002, 0.], 0.),
         ([0., 0., 0.], 1.),
     ):
         commands[0] = torch.tensor(command)
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        assert result[0] == expected
+        torch.testing.assert_close(result[0], expected * missing_one)

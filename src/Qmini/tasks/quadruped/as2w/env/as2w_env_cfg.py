@@ -500,10 +500,11 @@ class RewardsCfg:
             ),
             "height_threshold": 0.03,
             "contact_threshold": 1.0,
-            "std": 0.2,
             "command_name": "base_velocity",
             "standing_threshold": 0.1,
             "pure_vx_tolerance": 1e-3,
+            "vx_threshold": 0.25,
+            "std": 0.1,
         },
     )
 
@@ -695,7 +696,7 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 5
             self.scene.terrain.terrain_generator.num_cols = 5
-            self.scene.terrain.terrain_generator.curriculum = False
+            # self.scene.terrain.terrain_generator.curriculum = False
         # remove random pushing events
         self.events.base_external_force_torque = None
         self.events.push_robot = None
