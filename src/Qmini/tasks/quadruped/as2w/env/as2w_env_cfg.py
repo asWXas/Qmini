@@ -490,27 +490,26 @@ class RewardsCfg:
 
     gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
     
+    # 四轮接触惩罚：零指令时任何地形生效；非零指令仅在平地低速纯 VX 时生效。
     flat_four_wheel_contact = RewTerm(
         func=mdp.flat_terrain_four_wheel_contact,
-        weight=0.1,
+        weight=-0.5,  # 函数返回非负惩罚值，使用负权重扣分。
         params={
             "height_sensor_cfg": SceneEntityCfg("height_scanner"),
             "contact_sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
             ),
-            "height_threshold": 0.03,
-            "contact_threshold": 1.0,
-            "command_name": "base_velocity",
-            "standing_threshold": 0.1,
-            "pure_vx_tolerance": 1e-3,
-            "vx_threshold": 0.25,
-            "std": 0.1,
+            "command_name": "base_velocity",  # VX、VY、偏航指令全为 0 时直接启用。
+            "height_threshold": 0.03,  # 扫描点全部有效且最高与最低 Z 差 < 3 cm，判为平地。
+            "pure_vx_tolerance": 1e-3,  # 纯 VX：|VY| 和 |偏航指令| 均不超过此容差。
+            "vx_threshold": 0.75,  # 非零指令要求 0 < |VX| < 此值，单位 m/s。
+            "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
         },
     )
 
     turning_lateral_gait = RewTerm(
         func=mdp.GaitReward,
-        weight=1.0,
+        weight=0.75,
         params={
             "std": 0.1,
             "max_err": 0.2,
@@ -530,7 +529,7 @@ class RewardsCfg:
 
     feet_air_time = RewTerm(
         func=mdp.gait_air_time_limits,
-        weight=-1.0,
+        weight=-0.5,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
@@ -555,7 +554,7 @@ class RewardsCfg:
 
     wheel_obstacle_clearance = RewTerm(
         func=mdp.wheel_obstacle_clearance,
-        weight=-0.5,
+        weight=-1.0,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
