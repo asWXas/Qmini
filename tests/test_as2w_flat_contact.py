@@ -22,26 +22,27 @@ def test_flat_contact_gate():
     commands = torch.tensor([[0.3, 0., 0.]]).repeat(7, 1)
     env.command_manager = N(get_command=lambda name: commands)
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-    torch.testing.assert_close(result, torch.tensor([1., 0., 0., 0., 0., 0., 1.]))
+    torch.testing.assert_close(result, torch.tensor([0., 0., 1., 0., 0., 0., 0.]))
     for count in range(5):
         forces[0] = 0
         forces[0, :count, 2] = 10
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        torch.testing.assert_close(result[0], torch.tensor(float(count == 4)))
+        torch.testing.assert_close(result[0], torch.tensor(float(4 - count)))
     # Each individual wheel is required, regardless of its index.
     for wheel in range(4):
         forces[0, :, 2] = 10
         forces[0, wheel, 2] = 0
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        torch.testing.assert_close(result[0], torch.tensor(0.))
+        torch.testing.assert_close(result[0], torch.tensor(1.))
     forces[:, :, 2] = 10
-    all_contact = torch.tensor(1.)
-    # Zero command enables the reward on rough terrain.
+    forces[:, 0, 2] = 0
+    missing_contact = torch.tensor(1.)
+    # Zero command enables the penalty on rough terrain.
     for command, expected in (([0., 0., 0.], 1.), ([0.05, 0.05, 0.05], 0.),
                               ([0.08, 0.08, 0.], 0.), ([0., 0., 0.1], 0.)):
         commands[1] = torch.tensor(command)
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        torch.testing.assert_close(result[1], expected * all_contact)
+        torch.testing.assert_close(result[1], expected * missing_contact)
     commands[4] = 0
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
     torch.testing.assert_close(result[4], torch.tensor(1.))  # Zero command bypasses scan validity.
@@ -64,9 +65,9 @@ def test_flat_contact_gate():
     ):
         commands[0] = torch.tensor(command)
         result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
-        torch.testing.assert_close(result[0], expected * all_contact)
+        torch.testing.assert_close(result[0], expected * missing_contact)
 
-    # Height threshold is strict and configurable; all wheels are in contact.
+    # Height threshold is strict and configurable; each environment misses one wheel.
     commands[:] = torch.tensor([0.3, 0., 0.])
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
     torch.testing.assert_close(result, torch.tensor([1., 0., 1., 0., 0., 0., 1.]))
@@ -78,6 +79,6 @@ def test_flat_contact_gate():
     commands[:] = 0
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
     torch.testing.assert_close(result, torch.ones(7))
-    forces[:, 0, 2] = 0
+    forces[:, :, 2] = 10
     result = flat_terrain_four_wheel_contact(env, SceneEntityCfg('scan'), SceneEntityCfg('contact'))
     torch.testing.assert_close(result, torch.zeros(7))

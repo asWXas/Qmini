@@ -227,7 +227,13 @@ class ObservationsCfg:
             func=isaaclab_mdp.projected_gravity,
             noise=Unoise(n_min=-0.05, n_max=0.05),
         )
-        velocity_commands = ObsTerm(func=isaaclab_mdp.generated_commands, params={"command_name": "base_velocity"})
+        velocity_commands = ObsTerm(
+            func=isaaclab_mdp.generated_commands, 
+            params={
+                "command_name": "base_velocity"
+            },
+            scale=(2.0, 2.0, 2.0),
+        )
         joint_pos = ObsTerm(func=isaaclab_mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
         joint_vel = ObsTerm(func=isaaclab_mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
         actions = ObsTerm(func=isaaclab_mdp.last_action)
@@ -254,7 +260,7 @@ class ObservationsCfg:
         velocity_commands = ObsTerm(
             func=isaaclab_mdp.generated_commands,
             params={"command_name": "base_velocity"},
-            scale=(2.0, 2.0, 0.25),
+            scale=(2.0, 2.0, 2.0),
         )
         # 关节状态与动作历史
         joint_pos = ObsTerm(func=isaaclab_mdp.joint_pos_rel, scale=1.0, history_length=5, flatten_history_dim=True)
@@ -479,7 +485,7 @@ class RewardsCfg:
     )
     track_ang_vel_z_exp = RewTerm(
         func=isaaclab_mdp.track_ang_vel_z_exp,
-        weight=1.5,
+        weight=2.0,
         params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
     )
 
@@ -494,7 +500,7 @@ class RewardsCfg:
     gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
     flat_four_wheel_contact = RewTerm(
         func=mdp.flat_terrain_four_wheel_contact,
-        weight=0.5,
+        weight=-0.1,  # 按未着地轮数线性扣分，函数返回 0～4。
         params={
             "height_sensor_cfg": SceneEntityCfg("height_scanner"),
             "contact_sensor_cfg": SceneEntityCfg(
@@ -556,9 +562,9 @@ class RewardsCfg:
             "command_name": "base_velocity",
             "command_threshold": 0.1,
             "stand_still_scale": 1.5,  # 静止时所有腿关节统一系数。
-            "moving_hip_scale": 0.4,  # 运动时 HIP 偏差系数。
-            "moving_thigh_scale": 0.25,  # 运动时大腿偏差系数。
-            "moving_calf_scale": 0.25,  # 运动时小腿偏差系数。
+            "moving_hip_scale": 0.15,  # 运动时 HIP 偏差系数。
+            "moving_thigh_scale": 0.1,  # 运动时大腿偏差系数。
+            "moving_calf_scale": 0.1,  # 运动时小腿偏差系数。
         },
     )
 
@@ -575,7 +581,7 @@ class RewardsCfg:
 
     wheel_contact_slip = RewTerm(
         func=mdp.WheelContactSlip,
-        weight=-0.5,
+        weight=-0.25,
         params={
             "asset_cfg": SceneEntityCfg(
                 "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True

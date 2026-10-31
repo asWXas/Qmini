@@ -16,12 +16,12 @@ def flat_terrain_four_wheel_contact(
     command_name: str = "base_velocity",
     pure_vx_tolerance: float = 1e-3,
 ):
-    """返回四轮同时着地的二值奖励，需搭配正权重。
+    """返回未着地轮子的数量作为线性惩罚，需搭配负权重。
 
     CMD 严格为零时不限制地形；否则仅纯 VX 且扫描高度极差小于
     height_threshold 时生效，不限制 VX 大小。
     VY 和偏航指令使用 pure_vx_tolerance 判断是否为零。
-    四轮全部接触时奖励为 1，少任意一轮接触则为 0。
+    每少一轮接触，惩罚增加 1，取值 0～4；未启用时为 0。
     """
     command = env.command_manager.get_command(command_name)
     zero_command = (command[:, :3] == 0.0).all(dim=-1)
@@ -40,7 +40,8 @@ def flat_terrain_four_wheel_contact(
     if forces.shape[1] != 4:
         raise ValueError("Expected exactly four wheel contact bodies")
     in_contact = torch.linalg.vector_norm(forces, dim=-1) > contact_threshold
-    return (active & in_contact.all(dim=-1)).to(dtype=heights.dtype)
+    missing_count = (~in_contact).to(dtype=heights.dtype).sum(dim=-1)
+    return torch.where(active, missing_count, 0.0)
 
 
 def wheel_obstacle_clearance(
