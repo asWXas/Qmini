@@ -10,6 +10,21 @@ from isaaclab.utils.math import quat_apply_yaw
 from .terrain_geometry import scan_step_height, terrain_motion_scale
 
 
+def velocity_tracking_error_l2(env, command_name: str, component: str):
+    """机身坐标系下 X/Y 线速度或 yaw 角速度的指令误差平方。"""
+    command = env.command_manager.get_command(command_name)
+    data = env.scene["robot"].data
+    if component == "x":
+        error = command[:, 0] - data.root_lin_vel_b.torch[:, 0]
+    elif component == "y":
+        error = command[:, 1] - data.root_lin_vel_b.torch[:, 1]
+    elif component == "yaw":
+        error = command[:, 2] - data.root_ang_vel_b.torch[:, 2]
+    else:
+        raise ValueError(f"Unknown tracking component: {component}")
+    return error.square()
+
+
 def flat_terrain_four_wheel_contact(
     env,
     height_sensor_cfg: SceneEntityCfg,
@@ -200,32 +215,26 @@ def stand_still_joint_deviation(
     command_name: str,
     command_threshold: float = 0.1,
     stand_still_scale: float = 1.5,
-    moving_hip_scale: float = 0.25,
-    moving_thigh_scale: float = 0.25,
-    moving_calf_scale: float = 0.25,
-    terrain_sensor_names: list[str] | None = None,
-    rough_scale: float = 0.25,
+    moving_hip_scale: float = 0.1,
+    moving_thigh_scale: float = 0.1,
+    moving_calf_scale: float = 0.1,
 ):
-    """默认姿态 L1 偏差：静止统一缩放，运动时按 hip/thigh/calf 分组缩放。"""
+    """默认姿态偏差平方和：静止统一系数，运动按髋、大腿、小腿分组。"""
     asset = env.scene[asset_cfg.name]
     joint_ids = asset_cfg.joint_ids
     selected_ids = list(range(len(asset.joint_names)))[joint_ids] if isinstance(joint_ids, slice) else joint_ids
-    group_scales = {"hip": moving_hip_scale, "thigh": moving_thigh_scale, "calf": moving_calf_scale}
     groups = [asset.joint_names[index].rsplit("_", 1)[-1] for index in selected_ids]
-    if any(group not in group_scales for group in groups):
+    moving_scales = {"hip": moving_hip_scale, "thigh": moving_thigh_scale, "calf": moving_calf_scale}
+    if any(group not in moving_scales for group in groups):
         raise ValueError("Expected only hip, thigh, and calf joints")
     deviation = (
         asset.data.joint_pos.torch[:, joint_ids] - asset.data.default_joint_pos.torch[:, joint_ids]
-    ).abs()
-    moving_scales = deviation.new_tensor([group_scales[group] for group in groups])
+    ).square()
     command = env.command_manager.get_command(command_name)
     standing = torch.linalg.vector_norm(command, dim=-1) < command_threshold
     standing_penalty = deviation.sum(dim=-1) * stand_still_scale
-    moving_penalty = (deviation * moving_scales).sum(dim=-1)
-    penalty = torch.where(standing, standing_penalty, moving_penalty)
-    if terrain_sensor_names is not None:
-        penalty = penalty * terrain_motion_scale(env, terrain_sensor_names, rough_scale)
-    return penalty
+    moving_penalty = (deviation * deviation.new_tensor([moving_scales[group] for group in groups])).sum(dim=-1)
+    return torch.where(standing, standing_penalty, moving_penalty)
 
 
 def diagonal_wheel_distance_difference(env, asset_cfg: SceneEntityCfg, tolerance: float = 0.03):
@@ -256,7 +265,7 @@ def joint_torque_limits(env, asset_cfg: SceneEntityCfg):
     return torch.clamp(effort.abs() - limits, min=0.0).sum(dim=1)
 
 
-class action_rate_l2_second_order(ManagerTermBase):
+class action_smoothness_l2(ManagerTermBase):
     """原始动作二阶差分平方和；每回合前两步不惩罚。"""
 
     def __init__(self, cfg, env):
@@ -270,7 +279,7 @@ class action_rate_l2_second_order(ManagerTermBase):
         self._older_action[ids] = 0.0
         self._value[ids] = 0.0
 
-    def __call__(self, env, terrain_sensor_names: list[str] | None = None, rough_scale: float = 0.2):
+    def __call__(self, env):
         if self._last_step != env.common_step_counter:
             action = env.action_manager.action
             previous = env.action_manager.prev_action
@@ -279,7 +288,14 @@ class action_rate_l2_second_order(ManagerTermBase):
             self._value.masked_fill_(env.episode_length_buf < 3, 0.0)
             self._older_action.copy_(previous)
             self._last_step = env.common_step_counter
-        value = self._value.clone()
+        return self._value.clone()
+
+
+class action_rate_l2_second_order(action_smoothness_l2):
+    """兼容旧配置的地形缩放版本；普通二阶平滑使用 action_smoothness_l2。"""
+
+    def __call__(self, env, terrain_sensor_names: list[str] | None = None, rough_scale: float = 0.2):
+        value = super().__call__(env)
         if terrain_sensor_names is not None:
             value = value * terrain_motion_scale(env, terrain_sensor_names, rough_scale)
         return value

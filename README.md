@@ -148,8 +148,9 @@ Scripts forward extra Isaac Lab options and Hydra overrides. PPO logs are under
 The current rough configuration prioritizes forward/backward commands (65% of moving commands),
 retains 20% flat terrain and 50% stairs, and starts at terrain levels 0–1. Wheel scans cast downward
 from 1 m above the wheel so that tall step tops remain visible. Local height second differences
-distinguish stair edges from planar slopes. Near an edge, action smoothness costs fall to 20% and
-posture costs to 25%; clearance applies to swinging wheels or wheels resisting a riser, while a
+distinguish stair edges from planar slopes. Action rate and second-order action smoothness costs
+apply equally on all terrains. Joint posture costs use squared deviations with one standing scale and separate moving scales for hip, thigh, and calf joints, without terrain scaling; clearance applies to swinging
+wheels or wheels resisting a riser, while a
 command-normalized progress penalty discourages staying blocked. These are training heuristics,
 not a guaranteed rolling/stepping controller.
 

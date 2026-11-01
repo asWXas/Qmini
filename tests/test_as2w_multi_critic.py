@@ -16,11 +16,11 @@ def test_multi_critic_registration_and_reward_preservation(terrain):
     assert list(grouped.rewards) == list(agent.algorithm.critic_groups)
     assert list(grouped.rewards) == ['task', 'style', 'safety']
     assert set(grouped.rewards['task']) == {
-        'track_lin_vel_xy_exp', 'track_ang_vel_z_exp', 'gravity_alignment', 'obstacle_stall',
+        'track_lin_vel_xy_exp', 'track_ang_vel_z_exp', 'gravity_alignment',
+        'track_x_error_l2', 'track_y_error_l2', 'track_yaw_error_l2',
     }
     assert set(grouped.rewards['safety']) == {'undesired_contacts', 'joint_pos_limits', 'joint_torque_limits', 'termination_penalty'}
-    assert {'joint_torques_l2', 'action_rate_l2', 'flat_terrain_wheel_contact', 'turning_lateral_gait',
-            'feet_air_time_variance'} <= set(
+    assert {'joint_torques_l2', 'action_rate_l2', 'explicit_diagonal_gait'} <= set(
         grouped.rewards['style']
     )
     original = {k: v for k, v in vars(base.rewards).items() if isinstance(v, RewardTermCfg)}

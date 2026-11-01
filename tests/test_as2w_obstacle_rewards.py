@@ -167,10 +167,8 @@ def test_local_steps_relax_style_costs_continuously():
         env,
         SceneEntityCfg("robot", joint_ids=[0, 1, 2]),
         "base_velocity",
-        terrain_sensor_names=SENSOR_NAMES,
-        rough_scale=0.2,
     )
-    torch.testing.assert_close(deviation, 0.75 * scale)
+    torch.testing.assert_close(deviation, torch.full((5,), 0.3))
 
 
 def test_a_single_blocked_wheel_does_not_require_all_supports_to_lift():

@@ -5,8 +5,8 @@ from types import SimpleNamespace as N
 import pytest
 import torch
 
-from Qmini.tasks.quadruped.as2w.env.as2w_env_cfg import RewardsCfg
-from Qmini.tasks.quadruped.as2w.mdp.rewards import GaitReward
+from isaaclab.managers import RewardTermCfg, SceneEntityCfg
+from Qmini.tasks.quadruped.as2w.mdp.rewards import GaitReward, air_time_variance_penalty
 
 
 def test_air_time_variance_gate_clipping_and_reentry():
@@ -22,7 +22,9 @@ def test_air_time_variance_gate_clipping_and_reentry():
     ))
     env = N(scene=N(sensors={"contact_forces": sensor}),
             command_manager=N(get_command=lambda name: commands))
-    cfg = RewardsCfg().feet_air_time_variance
+    cfg = RewardTermCfg(func=air_time_variance_penalty, weight=-0.25, params={
+        "command_name": "base_velocity", "command_threshold": 0.1,
+    })
     cfg.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_ids=[1, 2, 3, 4])
     original_air, original_contact = air.clone(), contact.clone()
     expected = torch.tensor([0., 0., .05, .05, .05, 0.])
@@ -68,7 +70,12 @@ def test_gait_command_gate_and_pair_timing():
         find_sensors=lambda pair: ([names.index(name) for name in pair], pair),
     )
     env = N(scene=N(sensors={"contact_forces": sensor}), command_manager=N(get_command=lambda name: commands))
-    cfg = RewardsCfg().turning_lateral_gait
+    cfg = RewardTermCfg(func=GaitReward, weight=0.5, params={
+        "std": 0.1, "max_err": 0.2,
+        "synced_feet_pair_names": [["FL_foot", "RR_foot"], ["FR_foot", "RL_foot"]],
+        "sensor_cfg": SceneEntityCfg("contact_forces"),
+        "command_name": "base_velocity", "command_threshold": 0.1,
+    })
     term = GaitReward(cfg, env)
     expected = torch.tensor([0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0])
     torch.testing.assert_close(term(env, **cfg.params), expected)
