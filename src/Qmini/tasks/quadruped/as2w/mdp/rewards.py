@@ -5,6 +5,9 @@ import math
 import torch
 
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
+from isaaclab.utils.math import quat_apply_yaw
+
+from .terrain_geometry import scan_step_height, terrain_motion_scale
 
 
 def flat_terrain_four_wheel_contact(
@@ -15,6 +18,7 @@ def flat_terrain_four_wheel_contact(
     contact_threshold: float = 1.0,
     command_name: str = "base_velocity",
     pure_vx_tolerance: float = 1e-3,
+    wheel_sensor_names: list[str] | None = None,
 ):
     """返回未着地轮子的数量作为线性惩罚，需搭配负权重。
 
@@ -33,6 +37,11 @@ def flat_terrain_four_wheel_contact(
     highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
     lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
     flat_terrain = valid.all(dim=-1) & ((highest - lowest) < height_threshold)
+    if wheel_sensor_names is not None:
+        # 局部连续斜坡/缓起伏也可以滚动，不用世界 Z 极差把坡度误判成台阶。
+        scans = [scan_step_height(env.scene.sensors[name].data.ray_hits_w.torch) for name in wheel_sensor_names]
+        smooth = torch.stack([valid & (step < 0.02) for step, valid in scans], dim=-1).all(dim=-1)
+        flat_terrain = flat_terrain | smooth
     active = zero_command | (flat_terrain & pure_vx)
 
     # 接触条件：每个轮子的接触力范数须大于阈值。
@@ -51,21 +60,77 @@ def wheel_obstacle_clearance(
     wheel_radius: float = 0.086,
     clearance: float = 0.02,
     obstacle_threshold: float = 0.03,
+    contact_sensor_cfg: SceneEntityCfg | None = None,
+    command_name: str = "base_velocity",
+    command_threshold: float = 0.15,
 ):
-    """局部地形极差触发，惩罚轮底低于最高地面加安全余量的部分。"""
-    wheel_z = env.scene[asset_cfg.name].data.body_link_pos_w.torch[:, asset_cfg.body_ids, 2]
-    if wheel_z.shape[1] != len(sensor_names):
+    """只对行进方向上的台阶要求净空；支撑轮仅顶住立面时启用。
+
+    连续斜坡不触发。腾空轮需要越过台阶；正常承重的轮子不被要求
+    同时抬起。侧向阻力提供起步抬腿信号，不奖励原地反复抬腿。
+    """
+    asset = env.scene[asset_cfg.name]
+    positions = asset.data.body_link_pos_w.torch[:, asset_cfg.body_ids]
+    command = env.command_manager.get_command(command_name)
+    direction, moving = _travel_direction(asset, command, command_threshold)
+    highest, obstacle = _wheel_edges(env, positions, direction, sensor_names, obstacle_threshold)
+    deficit = (highest + clearance + wheel_radius - positions[..., 2]).clamp(min=0.0)
+    if contact_sensor_cfg is not None:
+        forces = env.scene.sensors[contact_sensor_cfg.name].data.net_forces_w.torch[:, contact_sensor_cfg.body_ids]
+        in_contact = torch.linalg.vector_norm(forces, dim=-1) > 1.0
+        resistance = -(forces[..., :2] * direction[:, None, :2]).sum(dim=-1)
+        blocked = (resistance / (forces[..., 2].abs() + 1.0) - 0.3).clamp(0.0, 1.0)
+        deficit = deficit * torch.where(in_contact, blocked, 1.0)
+    return torch.where(obstacle & moving[:, None], deficit, 0.0).sum(dim=-1)
+
+
+def _travel_direction(asset, command, threshold):
+    velocity = torch.cat((command[:, :2], torch.zeros_like(command[:, :1])), dim=-1)
+    speed = torch.linalg.vector_norm(velocity, dim=-1)
+    direction = quat_apply_yaw(asset.data.root_quat_w.torch, velocity / speed.clamp(min=1e-6)[:, None])
+    return direction, speed > threshold
+
+
+def _wheel_edges(env, positions, direction, sensor_names, threshold):
+    if positions.shape[1] != len(sensor_names):
         raise ValueError("Wheel bodies and scanners must have matching order and count")
-    penalty = torch.zeros_like(wheel_z[:, 0])
+    tops, edges = [], []
     for index, name in enumerate(sensor_names):
-        heights = env.scene.sensors[name].data.ray_hits_w.torch[..., 2]
-        valid = torch.isfinite(heights)
-        highest = heights.masked_fill(~valid, -torch.inf).amax(dim=-1)
-        lowest = heights.masked_fill(~valid, torch.inf).amin(dim=-1)
-        obstacle = (valid.sum(dim=-1) >= 2) & ((highest - lowest) > obstacle_threshold)
-        deficit = (highest + clearance + wheel_radius - wheel_z[:, index]).clamp(min=0.0)
-        penalty += torch.where(obstacle, deficit, 0.0)
-    return penalty
+        hits = env.scene.sensors[name].data.ray_hits_w.torch
+        step, valid = scan_step_height(hits)
+        ahead = ((hits[..., :2] - positions[:, index, None, :2]) * direction[:, None, :2]).sum(dim=-1) > 0.01
+        heights = hits[..., 2].masked_fill(~ahead | ~torch.isfinite(hits[..., 2]), -torch.inf)
+        top = heights.amax(dim=-1)
+        bottom = hits[..., 2].masked_fill(~torch.isfinite(hits[..., 2]), torch.inf).amin(dim=-1)
+        edges.append(valid & (step > threshold) & torch.isfinite(top) & (top - bottom > threshold))
+        tops.append(torch.where(torch.isfinite(top), top, positions[:, index, 2]))
+    return torch.stack(tops, dim=-1), torch.stack(edges, dim=-1)
+
+
+def obstacle_stall(
+    env,
+    asset_cfg: SceneEntityCfg,
+    sensor_names: list[str],
+    command_name: str = "base_velocity",
+    command_threshold: float = 0.15,
+    obstacle_threshold: float = 0.03,
+):
+    """台阶附近按指令速度归一化前进缺口，避免低速命令下顶住仍获高分。"""
+    asset = env.scene[asset_cfg.name]
+    command = env.command_manager.get_command(command_name)
+    direction, moving = _travel_direction(asset, command, command_threshold)
+    positions = asset.data.body_link_pos_w.torch[:, asset_cfg.body_ids]
+    _, obstacle = _wheel_edges(env, positions, direction, sensor_names, obstacle_threshold)
+    progress = (asset.data.root_lin_vel_w.torch[:, :2] * direction[:, :2]).sum(dim=-1)
+    speed = torch.linalg.vector_norm(command[:, :2], dim=-1).clamp(min=command_threshold)
+    shortfall = (1.0 - progress / speed).clamp(0.0, 1.0)
+    return torch.where(moving & obstacle.any(dim=-1), shortfall, 0.0)
+
+
+def terrain_aware_action_rate_l2(env, sensor_names: list[str], rough_scale: float = 0.2):
+    """保持平地动作平滑，在局部台阶附近降低动作变化代价。"""
+    difference = env.action_manager.action - env.action_manager.prev_action
+    return difference.square().sum(dim=-1) * terrain_motion_scale(env, sensor_names, rough_scale)
 
 
 def air_time_variance_penalty(
@@ -138,6 +203,8 @@ def stand_still_joint_deviation(
     moving_hip_scale: float = 0.25,
     moving_thigh_scale: float = 0.25,
     moving_calf_scale: float = 0.25,
+    terrain_sensor_names: list[str] | None = None,
+    rough_scale: float = 0.25,
 ):
     """默认姿态 L1 偏差：静止统一缩放，运动时按 hip/thigh/calf 分组缩放。"""
     asset = env.scene[asset_cfg.name]
@@ -155,7 +222,10 @@ def stand_still_joint_deviation(
     standing = torch.linalg.vector_norm(command, dim=-1) < command_threshold
     standing_penalty = deviation.sum(dim=-1) * stand_still_scale
     moving_penalty = (deviation * moving_scales).sum(dim=-1)
-    return torch.where(standing, standing_penalty, moving_penalty)
+    penalty = torch.where(standing, standing_penalty, moving_penalty)
+    if terrain_sensor_names is not None:
+        penalty = penalty * terrain_motion_scale(env, terrain_sensor_names, rough_scale)
+    return penalty
 
 
 def diagonal_wheel_distance_difference(env, asset_cfg: SceneEntityCfg, tolerance: float = 0.03):
@@ -200,7 +270,7 @@ class action_rate_l2_second_order(ManagerTermBase):
         self._older_action[ids] = 0.0
         self._value[ids] = 0.0
 
-    def __call__(self, env):
+    def __call__(self, env, terrain_sensor_names: list[str] | None = None, rough_scale: float = 0.2):
         if self._last_step != env.common_step_counter:
             action = env.action_manager.action
             previous = env.action_manager.prev_action
@@ -209,7 +279,10 @@ class action_rate_l2_second_order(ManagerTermBase):
             self._value.masked_fill_(env.episode_length_buf < 3, 0.0)
             self._older_action.copy_(previous)
             self._last_step = env.common_step_counter
-        return self._value.clone()
+        value = self._value.clone()
+        if terrain_sensor_names is not None:
+            value = value * terrain_motion_scale(env, terrain_sensor_names, rough_scale)
+        return value
 
 
 class GaitReward(ManagerTermBase):

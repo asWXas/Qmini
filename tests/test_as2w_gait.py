@@ -22,7 +22,7 @@ def test_air_time_variance_gate_clipping_and_reentry():
     ))
     env = N(scene=N(sensors={"contact_forces": sensor}),
             command_manager=N(get_command=lambda name: commands))
-    cfg = RewardsCfg().air_time_variance_penalty
+    cfg = RewardsCfg().feet_air_time_variance
     cfg.params["sensor_cfg"] = SceneEntityCfg("contact_forces", body_ids=[1, 2, 3, 4])
     original_air, original_contact = air.clone(), contact.clone()
     expected = torch.tensor([0., 0., .05, .05, .05, 0.])

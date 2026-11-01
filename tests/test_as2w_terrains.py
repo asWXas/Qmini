@@ -34,9 +34,52 @@ def test_stair_geometry(profile, inverted, difficulty):
 
 
 def test_terrain_mix():
-    assert len(ROUGH_TERRAINS_CFG.sub_terrains) == 11
-    assert sum(c.proportion for c in ROUGH_TERRAINS_CFG.sub_terrains.values()) == pytest.approx(1.0)
-    assert "boxes" not in ROUGH_TERRAINS_CFG.sub_terrains
+    from isaaclab.terrains import MeshPlaneTerrainCfg
+    from Qmini.tasks.quadruped.as2w.mdp.terrains.rough import SLOPES_CFG
+
+    terrains = ROUGH_TERRAINS_CFG.sub_terrains
+    stairs = [cfg for name, cfg in terrains.items() if "stairs" in name]
+    slopes = [cfg for name, cfg in terrains.items() if name.startswith("slope_")]
+    assert sum(cfg.proportion for cfg in terrains.values()) == pytest.approx(1.0)
+    assert sum(cfg.proportion for cfg in stairs) == pytest.approx(0.50)
+    assert sum(cfg.proportion for cfg in slopes) == pytest.approx(0.15)
+    assert isinstance(terrains["flat"], MeshPlaneTerrainCfg)
+    assert terrains["flat"].proportion == pytest.approx(0.20)
+    for name in ("boxes", "random_rough", "waves"):
+        assert terrains[name].proportion == pytest.approx(0.05)
+    assert all(cfg.step_height_range == (0.05, 0.23) for cfg in stairs)
+    assert SLOPES_CFG.angle_range_deg == (10.0, 30.0)
+
+
+def test_training_mix_keeps_flat_columns_and_increases_stair_difficulty():
+    from Qmini.tasks.quadruped.as2w.mdp.terrains.generator import MixedStairsTerrainGenerator
+
+    generator = MixedStairsTerrainGenerator.__new__(MixedStairsTerrainGenerator)
+    generator.cfg = ROUGH_TERRAINS_CFG
+    generator.np_rng = np.random.default_rng(42)
+    cells = []
+    generator._get_terrain_mesh = lambda difficulty, cfg: (difficulty, None)
+    generator._add_sub_terrain = lambda difficulty, origin, row, col, cfg: cells.append((row, col, difficulty, cfg))
+    generator._generate_curriculum_terrains()
+
+    layout = generator.stair_shape_layout
+    assert layout["flat"].shape == (4, 10)
+    assert layout["stairs_up"].shape == layout["stairs_down"].shape == (5, 10)
+    assert layout["slopes"].shape == (3, 10)
+    for name in ("boxes", "random_rough", "waves"):
+        assert layout[name].shape == (1, 10)
+    assert len(cells) == 200
+    stair_columns = {}
+    for row, col, difficulty, cfg in cells:
+        if hasattr(cfg, "step_height_range"):
+            lower, upper = cfg.step_height_range
+            stair_columns.setdefault(col, {})[row] = lower + difficulty * (upper - lower)
+    assert len(stair_columns) == 10
+    for rows in stair_columns.values():
+        heights = [rows[row] for row in range(10)]
+        assert np.all(np.diff(heights) > 0)
+        assert 0.05 <= heights[0] < 0.068
+        assert 0.212 <= heights[-1] <= 0.23
 
 
 def test_as2w_starts_upright():
@@ -72,7 +115,6 @@ def test_stairs_mix_within_direction_columns():
     generator._get_terrain_mesh = lambda difficulty, cfg: (difficulty, None)
     generator._add_sub_terrain = lambda difficulty, origin, row, col, cfg: cells.append((row, col, difficulty, cfg))
     generator._generate_curriculum_terrains()
-    configs = list(generator.cfg.sub_terrains.values())
     for direction, layout in generator.stair_shape_layout.items():
         assert layout.shape == (2, 10)
         names = list(generator.cfg.sub_terrains)

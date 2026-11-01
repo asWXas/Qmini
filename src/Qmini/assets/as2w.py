@@ -87,7 +87,7 @@ AS2W_CFG = ArticulationCfg(
             joint_effort_limit=15.0,
             joint_velocity_limit=98.47,
             stiffness=0.0,
-            damping=0.25,
+            damping=0.5,
         ),
     },
 )

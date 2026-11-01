@@ -44,6 +44,8 @@ from Qmini.assets.as2w import AS2W_CFG, LEG_JOINT_NAMES, WHEEL_JOINT_NAMES
 from .. import mdp
 from ..mdp.terrains import ROUGH_TERRAINS_CFG
 
+WHEEL_SCANNER_NAMES = ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"]
+
 ##
 # Physics backend presets
 ##
@@ -85,7 +87,7 @@ class MySceneCfg(InteractiveSceneCfg):
         prim_path="/World/ground",
         terrain_type="generator",
         terrain_generator=ROUGH_TERRAINS_CFG,
-        max_init_terrain_level=5,
+        max_init_terrain_level=1,
         collision_group=-1,
         physics_material=PhysxRigidBodyMaterialCfg(
             friction_combine_mode="multiply",
@@ -113,10 +115,11 @@ class MySceneCfg(InteractiveSceneCfg):
         mesh_prim_paths=["/World/ground"],
         global_world_only=True,
     )
-    # 轮心 3×3 扫描，世界系向下，不随轮子自转。
+    # 轮边 3×3 扫描，从轮心上方 1 m 向下，才能看到高于轮心的台阶顶。
+    # world 对齐使射线起点偏移不随轮子自转。
     fl_wheel_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/(?!.*FL_foot/).*FL_foot",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 1.0)),
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2]), # type: ignore
         mesh_prim_paths=["/World/ground"],
@@ -125,7 +128,7 @@ class MySceneCfg(InteractiveSceneCfg):
     )
     fr_wheel_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/(?!.*FR_foot/).*FR_foot",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 1.0)),
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2]), # type: ignore
         mesh_prim_paths=["/World/ground"],
@@ -134,7 +137,7 @@ class MySceneCfg(InteractiveSceneCfg):
     )
     rl_wheel_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/(?!.*RL_foot/).*RL_foot",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 1.0)),
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2]), # type: ignore
         mesh_prim_paths=["/World/ground"],
@@ -143,7 +146,7 @@ class MySceneCfg(InteractiveSceneCfg):
     )
     rr_wheel_scanner = RayCasterCfg(
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/(?!.*RR_foot/).*RR_foot",
-        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 0.0)),
+        offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 1.0)),
         ray_alignment="world",
         pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[0.2, 0.2]), # type: ignore
         mesh_prim_paths=["/World/ground"],
@@ -182,15 +185,16 @@ class CommandsCfg:
 
     base_velocity = mdp.GroupedVelocityCommandCfg(
         asset_name="robot",
-        resampling_time_range=(10.0, 15.0),
+        resampling_time_range=(20.0, 20.0),
         rel_standing_envs=0.05,
-        moving_proportions={"x": 0.1, "y": 0.1, "yaw": 0.15, "mix": 0.65},
+        # 先覆盖沿轮子滚动方向的越障，仍保留横移和转向训练。
+        moving_proportions={"x": 0.65, "y": 0.05, "yaw": 0.1, "mix": 0.2},
         heading_command=True,
         rel_heading_envs=1.0,
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=mdp.GroupedVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.0), lin_vel_y=(-1.0, 1.0), ang_vel_z=(-1.5, 1.5), heading=(-math.pi, math.pi)
+            lin_vel_x=(-1.0, 1.0), lin_vel_y=(-0.3, 0.3), ang_vel_z=(-1.0, 1.0), heading=(-math.pi, math.pi)
         ),
     )
 
@@ -208,7 +212,7 @@ class ActionsCfg:
     )
 
     wheel_vel = isaaclab_mdp.JointVelocityActionCfg(
-        asset_name="robot", joint_names=WHEEL_JOINT_NAMES, scale=5.0, use_default_offset=False, preserve_order=True
+        asset_name="robot", joint_names=WHEEL_JOINT_NAMES, scale=10.0, use_default_offset=False, preserve_order=True
     )
 
 
@@ -234,7 +238,12 @@ class ObservationsCfg:
             },
             scale=(2.0, 2.0, 2.0),
         )
-        joint_pos = ObsTerm(func=isaaclab_mdp.joint_pos_rel, noise=Unoise(n_min=-0.01, n_max=0.01))
+        # 连续旋转轮子的累计角度没有地形信息，避免其无界增长进入策略。
+        joint_pos = ObsTerm(
+            func=isaaclab_mdp.joint_pos_rel,
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES, preserve_order=True)},
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+        )
         joint_vel = ObsTerm(func=isaaclab_mdp.joint_vel_rel, noise=Unoise(n_min=-1.5, n_max=1.5))
         actions = ObsTerm(func=isaaclab_mdp.last_action)
         height_scan = ObsTerm(
@@ -250,115 +259,183 @@ class ObservationsCfg:
 
     @configclass
     class CriticCfg(ObsGroup):
-        """无噪声的特权观测。"""
+        """Critic 特权观测（无噪声）。"""
 
-        # 机身状态与命令
-        base_lin_vel = ObsTerm(func=isaaclab_mdp.base_lin_vel, scale=2.0, history_length=10, flatten_history_dim=True)
-        base_ang_vel = ObsTerm(func=isaaclab_mdp.base_ang_vel, scale=0.25, history_length=10, flatten_history_dim=True)
-
-        projected_gravity = ObsTerm(func=isaaclab_mdp.projected_gravity, scale=1.0)
+        # =========================================================
+        # 1. 机身状态与速度命令
+        # =========================================================
+        base_lin_vel = ObsTerm(
+            func=isaaclab_mdp.base_lin_vel,
+            scale=2.0,
+        )
+        base_ang_vel = ObsTerm(
+            func=isaaclab_mdp.base_ang_vel,
+            scale=0.25,
+        )
+        projected_gravity = ObsTerm(
+            func=isaaclab_mdp.projected_gravity,
+            scale=1.0,
+        )
         velocity_commands = ObsTerm(
             func=isaaclab_mdp.generated_commands,
             params={"command_name": "base_velocity"},
             scale=(2.0, 2.0, 2.0),
         )
-        # 关节状态与动作历史
-        joint_pos = ObsTerm(func=isaaclab_mdp.joint_pos_rel, scale=1.0, history_length=5, flatten_history_dim=True)
-        joint_vel = ObsTerm(func=isaaclab_mdp.joint_vel_rel, scale=0.05, history_length=5, flatten_history_dim=True)
 
-        actions = ObsTerm(func=isaaclab_mdp.last_action, history_length=3)
+        # =========================================================
+        # 2. 关节状态与动作历史
+        # =========================================================
+        joint_pos = ObsTerm(
+            func=isaaclab_mdp.joint_pos_rel,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=LEG_JOINT_NAMES,
+                    preserve_order=True,
+                )
+            },
+            scale=1.0,
+        )
+        joint_vel = ObsTerm(
+            func=isaaclab_mdp.joint_vel_rel,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=LEG_JOINT_NAMES+WHEEL_JOINT_NAMES,
+                    preserve_order=True,
+                )
+            },
+            scale=0.05,
+        )
+        actions = ObsTerm(
+            func=isaaclab_mdp.last_action,
+        )
 
-        # 执行误差：目标 − 实际
+        # =========================================================
+        # 3. 执行误差（目标 - 实际）
+        # =========================================================
         leg_position_error = ObsTerm(
             func=mdp.joint_position_execution_error,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=LEG_JOINT_NAMES,
+                    preserve_order=True,
+                )
+            },
             scale=1.0,
-            history_length=10,
-            flatten_history_dim=True,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES, preserve_order=True)},
+            history_length=5,
         )
         wheel_velocity_error = ObsTerm(
             func=mdp.joint_velocity_execution_error,
-            scale=0.05,
-            history_length=10,
-            flatten_history_dim=True,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=WHEEL_JOINT_NAMES, preserve_order=True)},
-        )
-        robot_lin_vel = ObsTerm(
-            func=isaaclab_mdp.root_lin_vel_w, scale=2.0, history_length=10, flatten_history_dim=True
-        )
-        robot_ang_vel = ObsTerm(
-            func=isaaclab_mdp.root_ang_vel_w, scale=0.25, history_length=10, flatten_history_dim=True
-        )
-
-        # 地形扫描
-        height_scan = ObsTerm(
-            func=isaaclab_mdp.height_scan,
-            scale=1.0,
-            params={"sensor_cfg": SceneEntityCfg("height_scanner")},
-            clip=(-1.5, 1.5),
-        )
-
-
-
-        # 轮子状态（FL、FR、RL、RR）
-        wheel_air_time = ObsTerm(
-            func=mdp.feet_air_time,
-            scale=1.0,
             params={
-                "sensor_cfg": SceneEntityCfg(
-                    "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=WHEEL_JOINT_NAMES,
+                    preserve_order=True,
                 )
             },
+            scale=0.05,
+            history_length=5,
+        )
+
+        # =========================================================
+        # 4. 地形扫描
+        # =========================================================
+        height_scan = ObsTerm(
+            func=isaaclab_mdp.height_scan,
+            params={
+                "sensor_cfg": SceneEntityCfg("height_scanner"),
+            },
+            scale=1.0,
+            clip=(-1.5, 1.5),
         )
         wheel_scan_height_range = ObsTerm(
             func=mdp.wheel_scan_height_range,
             params={
-                "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
+                "sensor_names": [
+                    "fl_wheel_scanner",
+                    "fr_wheel_scanner",
+                    "rl_wheel_scanner",
+                    "rr_wheel_scanner",
+                ],
+            },
+            scale=5.0,
+            clip=(0.0, 1.5),
+        )
+
+        # =========================================================
+        # 5. 轮子接触状态与离地时间
+        # =========================================================
+        wheel_air_time = ObsTerm(
+            func=mdp.feet_air_time,
+            params={
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces",
+                    body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                    preserve_order=True,
+                )
             },
             scale=1.0,
-            clip=(0.0, 1.5),
         )
         wheel_contact = ObsTerm(
             func=mdp.feet_contact_state,
-            scale=1.0,
             params={
                 "sensor_cfg": SceneEntityCfg(
-                    "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                    "contact_forces",
+                    body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                    preserve_order=True,
                 ),
                 "threshold": 1.0,
             },
+            scale=1.0,
         )
+
+        # =========================================================
+        # 6. 轮子摩擦系数
+        # =========================================================
         wheel_dynamic_friction = ObsTerm(
             func=mdp.feet_friction,
-            scale=1.0,
             params={
                 "asset_cfg": SceneEntityCfg(
-                    "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                    "robot",
+                    body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                    preserve_order=True,
                 ),
                 "component": 1,
             },
+            scale=1.0,
         )
         wheel_static_friction = ObsTerm(
             func=mdp.feet_friction,
-            scale=1.0,
             params={
                 "asset_cfg": SceneEntityCfg(
-                    "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                    "robot",
+                    body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                    preserve_order=True,
                 ),
                 "component": 0,
             },
+            scale=1.0,
         )
-        # 扰动（机身坐标系）
+
+        # =========================================================
+        # 7. 动力学扰动（机身坐标系）
+        # =========================================================
         base_com_offset = ObsTerm(
             func=mdp.base_com_offset_observation,
             params={"event_name": "base_com"},
             scale=(10.0, 10.0, 10.0),
         )
-
         base_external_wrench = ObsTerm(
             func=mdp.base_wrench_observation,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    body_names=["base_link"],
+                )
+            },
             scale=(0.01, 0.01, 0.01, 0.1, 0.1, 0.1),
-            params={"asset_cfg": SceneEntityCfg("robot", body_names=["base_link"])},
         )
 
         def __post_init__(self):
@@ -473,176 +550,297 @@ class EventsCfg:
     push_robot = None
 
 
+
 @configclass
 class RewardsCfg:
-    """Reward terms for the MDP."""
-
-    # -- task
+    """轮足机器人强化学习奖励配置。"""
     track_lin_vel_xy_exp = RewTerm(
         func=isaaclab_mdp.track_lin_vel_xy_exp,
         weight=3.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
+        params={
+            "command_name": "base_velocity",
+            "std": math.sqrt(0.25),
+        },
     )
     track_ang_vel_z_exp = RewTerm(
         func=isaaclab_mdp.track_ang_vel_z_exp,
         weight=2.0,
-        params={"command_name": "base_velocity", "std": math.sqrt(0.25)},
-    )
-
-    # -- penalties
-    lin_vel_z_l2 = RewTerm(func=isaaclab_mdp.lin_vel_z_l2, weight=-2.0)
-    ang_vel_xy_l2 = RewTerm(func=isaaclab_mdp.ang_vel_xy_l2, weight=-0.05)
-
-    action_rate_l2 = RewTerm(func=isaaclab_mdp.action_rate_l2, weight=-0.01)
-    action_rate_l2_second_order = RewTerm(func=mdp.action_rate_l2_second_order, weight=-0.01)
-
-
-    gravity_z_alignment = RewTerm(func=mdp.gravity_z_alignment, weight=0.5, params={"std": 0.2})
-    flat_four_wheel_contact = RewTerm(
-        func=mdp.flat_terrain_four_wheel_contact,
-        weight=-0.1,  # 按未着地轮数线性扣分，函数返回 0～4。
         params={
-            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
-            "contact_sensor_cfg": SceneEntityCfg(
-                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
-            ),
-            "command_name": "base_velocity",  # CMD 全为零直接启用，否则检查纯 VX 和地形。
-            "height_threshold": 0.05,  # 非零纯 VX 时，扫描点须全部有效且最高与最低 Z 差 < 5 cm。
-            "pure_vx_tolerance": 1e-2,  # |VY| 和 |偏航指令| 均不超过此容差时启用。
-            "contact_threshold": 1.0,  # 单轮接触力范数 > 1 N，判为着地。
+            "command_name": "base_velocity",
+            "std": math.sqrt(0.25),
         },
     )
 
-    feet_air_time = RewTerm(
+    lin_vel_z_l2 = RewTerm(
+        func=isaaclab_mdp.lin_vel_z_l2,
+        weight=-2.0,
+    )
+    ang_vel_xy_l2 = RewTerm(
+        func=isaaclab_mdp.ang_vel_xy_l2,
+        weight=-0.05,
+    )
+    gravity_alignment = RewTerm(
+        func=mdp.gravity_z_alignment,
+        weight=0.5,
+        params={
+            "std": 0.2,
+        },
+    )
+
+    flat_terrain_wheel_contact = RewTerm(
+        func=mdp.flat_terrain_four_wheel_contact,
+        weight=-0.1,
+        params={
+            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+            "contact_sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "command_name": "base_velocity",
+            "height_threshold": 0.05,       # 地形最大高度差：5 cm。
+            "wheel_sensor_names": WHEEL_SCANNER_NAMES,
+            "pure_vx_tolerance": 1e-2,      # VY、偏航指令的零值容差。
+            "contact_threshold": 1.0,      # 接触力范数阈值：1 N。
+        },
+    )
+    wheel_contact_slip = RewTerm(
+        func=mdp.WheelContactSlip,
+        weight=-0.25,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "sensor_names": [
+                "fl_wheel_contact",
+                "fr_wheel_contact",
+                "rl_wheel_contact",
+                "rr_wheel_contact",
+            ],
+            "slip_threshold": 0.05,         # 切向滑动速度阈值：5 cm/s。
+            "contact_threshold": 1.0,      # 法向接触力阈值：1 N。
+        },
+    )
+
+    # ============================================================
+    # 4. 步态协调 (Gait Coordination)
+    # ============================================================
+
+    # 惩罚超出目标区间的轮足腾空时间。
+    # 仅在运动指令超过阈值时生效。
+    feet_air_time_limits = RewTerm(
         func=mdp.gait_air_time_limits,
         weight=-0.25,
         params={
             "sensor_cfg": SceneEntityCfg(
-                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
             ),
             "command_name": "base_velocity",
-            "air_time_range": (0.15, 0.35),
+            "air_time_range": (0.15, 0.35),  # 目标腾空时间区间：0.15～0.35 s。
             "command_threshold": 0.1,
         },
     )
-    air_time_variance_penalty = RewTerm(
+
+    # 惩罚横移或转向时各轮足腾空时间的不一致。
+    # 内部历史时长截断至 0.5 s，并保留历史状态。
+    feet_air_time_variance = RewTerm(
         func=mdp.air_time_variance_penalty,
-        weight=-0.25,  # 仅横移/转向生效，历史时长截断至 0.5 s，不清空。
+        weight=-0.25,
         params={
             "sensor_cfg": SceneEntityCfg(
-                "contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
             ),
             "command_name": "base_velocity",
-            "command_threshold": 0.1,  # sqrt(VY² + yaw²) > 此阈值时启用。
+            "command_threshold": 0.1,  # sqrt(VY² + yaw²) 的启用阈值。
         },
     )
+
+    # 横移及转向时鼓励对角轮足同步、两组交替的协调步态。
     turning_lateral_gait = RewTerm(
         func=mdp.GaitReward,
         weight=0.5,
         params={
             "std": 0.1,
             "max_err": 0.2,
-            "synced_feet_pair_names": [["FL_foot", "RR_foot"], ["FR_foot", "RL_foot"]],
+            "synced_feet_pair_names": [
+                ["FL_foot", "RR_foot"],
+                ["FR_foot", "RL_foot"],
+            ],
             "sensor_cfg": SceneEntityCfg("contact_forces"),
             "command_name": "base_velocity",
             "command_threshold": 0.1,
         },
     )
 
-
-
-    wheel_obstacle_clearance = RewTerm(
-        func=mdp.wheel_obstacle_clearance,
-        weight=-5.0,
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
-            ),
-            "sensor_names": ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"],
-            "wheel_radius": 0.086,
-            "clearance": 0.0,
-            "obstacle_threshold": 0.03,
-        },
-    )
-
-    stand_still_joint_deviation = RewTerm(
-        func=mdp.stand_still_joint_deviation,
-        weight=-1.0,
-        params={
-            "asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES),
-            "command_name": "base_velocity",
-            "command_threshold": 0.1,
-            "stand_still_scale": 1.5,  # 静止时所有腿关节统一系数。
-            "moving_hip_scale": 0.15,  # 运动时 HIP 偏差系数。
-            "moving_thigh_scale": 0.1,  # 运动时大腿偏差系数。
-            "moving_calf_scale": 0.1,  # 运动时小腿偏差系数。
-        },
-    )
-
+    # 惩罚两条对角轮足间距的不一致，保持支撑几何协调。
     diagonal_wheel_distance_difference = RewTerm(
         func=mdp.diagonal_wheel_distance_difference,
         weight=-0.1,
         params={
             "asset_cfg": SceneEntityCfg(
-                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
             ),
-            "tolerance": 0.03,  # XY 对角线长度差容差 3 cm，所有地形统一。
+            "tolerance": 0.03,  # 对角线 XY 长度差容差：3 cm。
         },
     )
 
-    wheel_contact_slip = RewTerm(
-        func=mdp.WheelContactSlip,
-        weight=-0.25,
+    # ============================================================
+    # 5. 障碍物适应 (Obstacle Adaptation)
+    # ============================================================
+    wheel_obstacle_clearance = RewTerm(
+        func=mdp.wheel_obstacle_clearance,
+        weight=-5.0,
         params={
             "asset_cfg": SceneEntityCfg(
-                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
             ),
-            "sensor_names": ["fl_wheel_contact", "fr_wheel_contact", "rl_wheel_contact", "rr_wheel_contact"],
-            "slip_threshold": 0.05,  # 接触点切向速度超过 5 cm/s 才算打滑。
-            "contact_threshold": 1.0,  # 仅检查法向力 > 1 N 的接触点。
+            "sensor_names": WHEEL_SCANNER_NAMES,
+            "wheel_radius": 0.086,         # 轮半径：8.6 cm。
+            "clearance": 0.025,            # 目标避障间隙：2.5 cm。
+            "obstacle_threshold": 0.03,    # 障碍高度判定阈值：3 cm。
+            "contact_sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "command_name": "base_velocity",
+            "command_threshold": 0.15,
         },
     )
 
-    dof_torques_l2 = RewTerm(func=isaaclab_mdp.joint_torques_l2, weight=-1.0e-5)
-    leg_acc_l2 = RewTerm(
-        func=isaaclab_mdp.joint_acc_l2,
-        weight=-2.5e-7,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES)},
-    )
-    wheel_acc_l2 = RewTerm(
-        func=isaaclab_mdp.joint_acc_l2,
-        weight=-1.0e-9,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=WHEEL_JOINT_NAMES)},
+    # 惩罚存在障碍物时的运动停滞，鼓励主动越障。
+    obstacle_stall = RewTerm(
+        func=mdp.obstacle_stall,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "sensor_names": WHEEL_SCANNER_NAMES,
+            "command_name": "base_velocity",
+            "command_threshold": 0.15,
+            "obstacle_threshold": 0.03,
+        },
     )
 
-    # -- optional penalties
+    # ============================================================
+    # 6. 关节姿态与物理约束 (Joint Constraints)
+    # ============================================================
+    joint_pose_deviation = RewTerm(
+        func=mdp.stand_still_joint_deviation,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=LEG_JOINT_NAMES,
+            ),
+            "command_name": "base_velocity",
+            "command_threshold": 0.1,
+            "stand_still_scale": 1.5,   # 静止时所有腿关节的统一系数。
+            "moving_hip_scale": 0.1,    # 运动时髋关节偏差系数。
+            "moving_thigh_scale": 0.1,  # 运动时大腿关节偏差系数。
+            "moving_calf_scale": 0.1,   # 运动时小腿关节偏差系数。
+            "terrain_sensor_names": WHEEL_SCANNER_NAMES,
+            "rough_scale": 0.25,       # 粗糙地形下的约束调节系数。
+        },
+    )
+
+    # 惩罚关节驱动力矩平方，降低驱动负担。
+    joint_torques_l2 = RewTerm(
+        func=isaaclab_mdp.joint_torques_l2,
+        weight=-1.0e-5,
+    )
+
+    # 惩罚腿部关节加速度平方，抑制高频振荡。
+    leg_joint_acc_l2 = RewTerm(
+        func=isaaclab_mdp.joint_acc_l2,
+        weight=-2.5e-7,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=LEG_JOINT_NAMES,
+            ),
+        },
+    )
+
+    # 惩罚轮关节加速度平方，平滑轮驱动响应。
+    wheel_joint_acc_l2 = RewTerm(
+        func=isaaclab_mdp.joint_acc_l2,
+        weight=-1.0e-9,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=WHEEL_JOINT_NAMES,
+            ),
+        },
+    )
+
+
+    action_rate_l2 = RewTerm(
+        func=mdp.terrain_aware_action_rate_l2,
+        weight=-0.01,
+        params={
+            "sensor_names": WHEEL_SCANNER_NAMES,
+            "rough_scale": 0.2,
+        },
+    )
+    action_second_order_l2 = RewTerm(
+        func=mdp.action_rate_l2_second_order,
+        weight=-0.01,
+        params={
+            "terrain_sensor_names": WHEEL_SCANNER_NAMES,
+            "rough_scale": 0.2,
+        },
+    )
+    termination_penalty = RewTerm(
+        func=isaaclab_mdp.is_terminated,
+        weight=-100.0,
+    )
     undesired_contacts = RewTerm(
         func=isaaclab_mdp.undesired_contacts,
         weight=-1.0,
-        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=".*_thigh"), "threshold": 1.0},
-    )
-    dof_pos_limits = RewTerm(
-        func=isaaclab_mdp.joint_pos_limits,
-        weight=-1.0,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES, preserve_order=True)},
-    )
-    # joint_pose_limits = RewTerm(
-    #     func=mdp.joint_pose_limits,
-    #     weight=-1.0,
-    #     params={
-    #         "hip": (-0.785, 0.785),
-    #         "thigh": (-1.3, 3.492),
-    #         "calf": (-2.7677, -0.8133),
-    #     },
-    # )
-    dof_torque_limits = RewTerm(
-        func=mdp.joint_torque_limits,
-        weight=-0.01,
-        params={"asset_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES + WHEEL_JOINT_NAMES)},
+        params={
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=".*_thigh",
+            ),
+            "threshold": 1.0,
+        },
     )
 
-    # 非正常终止权重 -100，实际扣分为 100 * step_dt；正常超时不扣分。
-    terminated = RewTerm(func=isaaclab_mdp.is_terminated, weight=-100.0)
+    joint_pos_limits = RewTerm(
+        func=isaaclab_mdp.joint_pos_limits,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=LEG_JOINT_NAMES,
+                preserve_order=True,
+            ),
+        },
+    )
+    joint_torque_limits = RewTerm(
+        func=mdp.joint_torque_limits,
+        weight=-0.01,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=LEG_JOINT_NAMES + WHEEL_JOINT_NAMES,
+            ),
+        },
+    )
 
 
 @configclass

@@ -16,11 +16,11 @@ def test_multi_critic_registration_and_reward_preservation(terrain):
     assert list(grouped.rewards) == list(agent.algorithm.critic_groups)
     assert list(grouped.rewards) == ['task', 'style', 'safety']
     assert set(grouped.rewards['task']) == {
-        'track_lin_vel_xy_exp', 'track_ang_vel_z_exp', 'gravity_z_alignment',
+        'track_lin_vel_xy_exp', 'track_ang_vel_z_exp', 'gravity_alignment', 'obstacle_stall',
     }
-    assert set(grouped.rewards['safety']) == {'undesired_contacts', 'dof_pos_limits', 'dof_torque_limits', 'terminated'}
-    assert {'dof_torques_l2', 'action_rate_l2', 'flat_four_wheel_contact', 'turning_lateral_gait',
-            'air_time_variance_penalty'} <= set(
+    assert set(grouped.rewards['safety']) == {'undesired_contacts', 'joint_pos_limits', 'joint_torque_limits', 'termination_penalty'}
+    assert {'joint_torques_l2', 'action_rate_l2', 'flat_terrain_wheel_contact', 'turning_lateral_gait',
+            'feet_air_time_variance'} <= set(
         grouped.rewards['style']
     )
     original = {k: v for k, v in vars(base.rewards).items() if isinstance(v, RewardTermCfg)}
@@ -52,6 +52,6 @@ def test_abnormal_termination_cost_scales_with_dt(step_dt):
         terminated=torch.tensor([False, True, False, True]),
         time_outs=torch.tensor([False, False, True, True]),
     ))
-    term = RewardsCfg().terminated
+    term = RewardsCfg().termination_penalty
     actual = term.func(env, **term.params) * term.weight * step_dt
     torch.testing.assert_close(actual, torch.tensor([0., -100., 0., -100.]) * step_dt)

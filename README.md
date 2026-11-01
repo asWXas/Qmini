@@ -119,15 +119,14 @@ The `JT128` fixed link is preserved. This adds an asset configuration, not a reg
 ### AS2W training
 
 Registered tasks: `Qmini-Velocity-Rough-AS2W` and `Qmini-Velocity-Flat-AS2W`.
-Both support Isaac Sim PhysX and Newton (default) with AS2W explicit ideal PD. Flat terrain retains
-all scan observations so the input layout stays consistent.
+The default configuration uses Isaac Sim PhysX with AS2W explicit ideal PD. The detailed wheel-contact
+slip reward requires PhysX. Flat terrain retains all scan observations so the input layout stays consistent.
 
 ```bash
 # PPO (rough terrain by default)
 bash scripts/train_as2w.sh
 # Select a physics backend
 bash scripts/train_as2w.sh --physics isaacsim_physx
-bash scripts/train_as2w.sh --physics newton
 # Small startup/training check
 bash scripts/train_as2w.sh --num_envs 16 --max_iterations 2
 # Flat-terrain PPO
@@ -143,6 +142,42 @@ For student playback, pass `--agent rsl_rl_distillation_cfg_entry_point`.
 Scripts forward extra Isaac Lab options and Hydra overrides. PPO logs are under
 `logs/rsl_rl/as2w_rough` or `logs/rsl_rl/as2w_flat`; distillation uses the corresponding
 `_distillation` experiment directory. No teacher checkpoint is bundled.
+
+#### AS2W rolling and obstacle training
+
+The current rough configuration prioritizes forward/backward commands (65% of moving commands),
+retains 20% flat terrain and 50% stairs, and starts at terrain levels 0–1. Wheel scans cast downward
+from 1 m above the wheel so that tall step tops remain visible. Local height second differences
+distinguish stair edges from planar slopes. Near an edge, action smoothness costs fall to 20% and
+posture costs to 25%; clearance applies to swinging wheels or wheels resisting a riser, while a
+command-normalized progress penalty discourages staying blocked. These are training heuristics,
+not a guaranteed rolling/stepping controller.
+
+Leg position observations now exclude continuous wheel angles. PPO uses a log-parameterized action
+standard deviation and an initial learning rate of 3e-4; observation normalization is currently disabled.
+Action scales also changed. **Start a fresh run; old checkpoints do not match this observation/action
+configuration.** Keep previous runs for comparison.
+
+```bash
+# Scoped runtime settings avoid the observed Kit/OpenBLAS startup crash and sourced ROS libraries.
+env -u LD_LIBRARY_PATH -u PYTHONPATH OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  bash scripts/train_as2w.sh --experiment_name as2w_roll_step --run_name roll_step_v1
+
+# Evaluate a NEW rough checkpoint separately on flat ground and fixed 10 cm stairs.
+env -u LD_LIBRARY_PATH -u PYTHONPATH OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run python scripts/evaluate_as2w.py --checkpoint /absolute/path/to/model.pt \
+  --terrain flat --viz none --output /tmp/as2w_flat.json
+env -u LD_LIBRARY_PATH -u PYTHONPATH OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  uv run python scripts/evaluate_as2w.py --checkpoint /absolute/path/to/model.pt \
+  --terrain stairs_up --step_height 0.1 --viz none --output /tmp/as2w_stairs.json
+```
+
+The evaluator reports first-episode displacement, failures, wheel contact fraction, leg velocity RMS,
+and body roll/pitch RMS. `first_riser_crossed_fraction` requires both forward displacement beyond
+the first riser and simultaneous body height gain; it does not measure full-stair completion.
+Check flat rolling and repeat stair evaluation at 5, 10, 15 and 20 cm before increasing difficulty.
+Aggregate training `success_rate` is a velocity-tracking statistic, not obstacle success. Inspect
+value loss for Inf/NaN as well as reward; the built-in NaN check only covers environment outputs.
 
 ## Development
 
