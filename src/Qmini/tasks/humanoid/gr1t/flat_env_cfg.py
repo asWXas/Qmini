@@ -1,8 +1,6 @@
 import math
 
-import isaaclab.terrains as terrain_gen
 from isaaclab.managers import RewardTermCfg
-from isaaclab.terrains import TerrainGeneratorCfg
 from isaaclab.utils.configclass import configclass
 
 from .env.gr1t_env_cfg import LocomotionVelocityRoughEnvCfg
@@ -11,66 +9,30 @@ from .env.gr1t_env_cfg import LocomotionVelocityRoughEnvCfg
 # Flat Environment
 # =============================================================================
 
-# Mostly flat terrain with low-amplitude height variation.  The plane patch is
-# deliberately the dominant mode so the policy can retain its learned gait;
-# the rough patches add only mild foot-placement and balance perturbations.
-LIGHT_ROUGH_TERRAINS_CFG = TerrainGeneratorCfg(
-    size=(8.0, 8.0),
-    border_width=20.0,
-    num_rows=10,
-    num_cols=20,
-    horizontal_scale=0.1,
-    vertical_scale=0.005,
-    slope_threshold=0.75,
-    use_cache=False,
-    sub_terrains={
-        "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=0.30),
-        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
-            proportion=0.40,
-            noise_range=(0.01, 0.04),
-            noise_step=0.01,
-            border_width=0.25,
-        ),
-        "gentle_slope": terrain_gen.HfPyramidSlopedTerrainCfg(
-            proportion=0.30,
-            slope_range=(0.1, 0.30),
-            platform_width=3.0,
-            border_width=0.25,
-        ),
-    },
-)
-
-
 @configclass
 class QminiFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
-    """Mostly-flat, mildly rough terrain configuration for GR1T2 locomotion."""
+    """GR1T2 locomotion on its own mixed terrain curriculum."""
 
     def __post_init__(self):
         super().__post_init__()
         # Straight legs put the GR1T2 sole about 0.953 m below the base.
         # Start just above the floor so reset does not begin with bent knees.
         self.scene.robot.init_state.pos = (0.0, 0.0, 0.96)
+        # GR1T 独立地形入口：mdp/terrains/rough.py，由基础场景加载并启用课程。
         self.scene.terrain.terrain_type = "generator"
-        self.scene.terrain.terrain_generator = LIGHT_ROUGH_TERRAINS_CFG
-        self.curriculum.terrain_levels = None
-        self.scene.terrain.terrain_generator.curriculum = False
 
         # ==================================================================
         # Commands
         # ==================================================================
 
-        # Four motion modes plus an explicit (0, 0, 0) command.
-        # Probabilities must be non-negative and sum to 1.0.
-        self.commands.base_velocity.prob_x_only = 0.225
-        self.commands.base_velocity.prob_y_only = 0.09
-        self.commands.base_velocity.prob_yaw_only = 0.135
-        self.commands.base_velocity.prob_mixed = 0.45
-        self.commands.base_velocity.prob_zero = 0.10
+        # Grouped velocity sampling and heading settings inherit CommandsCfg.
 
+        # Reward tuning lives here; body/joint selections inherit RewardsCfg.
+        # Multi-critic reuses these tuned terms through from_flat().
         # ----------------------------------------------------------
-        # Velocity tracking
+        # Task：速度跟踪
         # ----------------------------------------------------------
-        self.rewards.track_lin_vel_xy.weight = 2.0
+        self.rewards.track_lin_vel_xy.weight = 3.0
         self.rewards.track_lin_vel_xy.params["std"] = math.sqrt(0.25)
         self.rewards.track_lin_vel_xy.params["command_name"] = "base_velocity"
 
@@ -79,7 +41,7 @@ class QminiFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.track_ang_vel_z.params["command_name"] = "base_velocity"
 
         # ----------------------------------------------------------
-        # Base / torso posture
+        # Task：基座/躯干直立与离地高度
         # ----------------------------------------------------------
         self.rewards.base_upright.weight = 0.25
         self.rewards.base_upright.params["std"] = math.sqrt(0.25)
@@ -87,120 +49,130 @@ class QminiFlatEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.torso_upright.weight = 1.0
         self.rewards.torso_upright.params["std"] = math.sqrt(0.25)
 
+        self.rewards.base_height.weight = -8.0
+        self.rewards.base_height.params["scan_half_extent"] = (0.2, 0.2)
+        self.rewards.base_height.params["target_height"] = 0.95
+
+        # ----------------------------------------------------------
+        # Task：低速站姿
+        # ----------------------------------------------------------
+        self.rewards.stand_still.weight = -0.5
+        self.rewards.stand_still.params["command_name"] = "base_velocity"
+        self.rewards.stand_still.params["gait_reward_name"] = "gait"
+        self.rewards.stand_still.params["legs_weight"] = 0.75
+        self.rewards.stand_still.params["waist_weight"] = 0.5
+        self.rewards.stand_still.params["arms_weight"] = 0.5
+        self.rewards.stand_still.params["stand_speed"] = 0.05
+        self.rewards.stand_still.params["move_speed"] = 0.20
+        self.rewards.stand_still.params["posture_softness"] = 0.05
+
+        # ----------------------------------------------------------
+        # Coordination：基座/躯干运动稳定性
+        # ----------------------------------------------------------
         self.rewards.base_motion_penalty.weight = -0.10
+        self.rewards.base_motion_penalty.params["lin_vel_b"] = 0.8
+        self.rewards.base_motion_penalty.params["ang_vel_b"] = 0.2
         self.rewards.torso_motion_penalty.weight = -0.15
+        self.rewards.torso_motion_penalty.params["lin_vel_b"] = 0.8
+        self.rewards.torso_motion_penalty.params["ang_vel_b"] = 0.2
 
         # 抑制左右摇摆 / "鸭子步": 横向速度 + roll 角速度 + 侧倾角
         self.rewards.base_lateral_sway.weight = -0.1
+        self.rewards.base_lateral_sway.params["command_name"] = "base_velocity"
         self.rewards.base_lateral_sway.params["lin_vel_weight"] = 1.0
         self.rewards.base_lateral_sway.params["roll_rate_weight"] = 0.5
         self.rewards.base_lateral_sway.params["roll_angle_weight"] = 0.5
         self.rewards.base_lateral_sway.params["max_speed"] = 0.10
 
-        self.rewards.base_height.weight = -8.0
-        self.rewards.base_height.params["target_height"] = 0.95
-
         # ----------------------------------------------------------
-        # Standstill
+        # Coordination：步态、落脚质量和全身风格
         # ----------------------------------------------------------
-        self.rewards.stand_still.weight = -0.5
-        self.rewards.stand_still.params["legs_weight"] = 0.75
-        self.rewards.stand_still.params["waist_weight"] = 0.5
-        self.rewards.stand_still.params["arms_weight"] = 0.5
-        self.rewards.stand_still.params["stand_speed"] = 0.05
-        self.rewards.stand_still.params["move_speed"] = 0.10
+        self.rewards.gait.weight = 1.0
+        self.rewards.gait.params["command_name"] = "base_velocity"
+        self.rewards.gait.params["period"] = 0.4
+        self.rewards.gait.params["duty_factor"] = 0.6
+        self.rewards.gait.params["target_height"] = 0.06
+        self.rewards.gait.params["height_std"] = 0.03
+        self.rewards.gait.params["sole_offset"] = 0.054909
+        self.rewards.gait.params["command_threshold"] = 0.1
+        self.rewards.gait.params["command_transition_width"] = 0.05
+        self.rewards.gait.params["phase_transition"] = 0.1
+        self.rewards.gait.params["contact_threshold"] = 1.0
+        self.rewards.gait.params["sensor_names"] = ["height_scanner_left", "height_scanner_right"]
+        self.rewards.foothold_flatness.weight = 1.0
+        self.rewards.foothold_flatness.params["sensor_names"] = ["height_scanner_left", "height_scanner_right"]
+        self.rewards.foothold_flatness.params["command_name"] = "base_velocity"
+        self.rewards.foothold_flatness.params["height_std"] = 0.02
+        self.rewards.foothold_flatness.params["min_air_time"] = 0.08
+        self.rewards.foothold_flatness.params["contact_threshold"] = 1.0
+        self.rewards.foothold_flatness.params["command_threshold"] = 0.1
+        self.rewards.foothold_flatness.params["command_transition_width"] = 0.05
 
-        # ----------------------------------------------------------
-        # Gait
-        # ----------------------------------------------------------
-        self.rewards.feet_air_time.weight = 1.0
-        self.rewards.feet_air_time.params["threshold"] = 0.15
-        self.rewards.feet_air_time.params["command_name"] = "base_velocity"
+        # Independent style weights; timing/clearance remain in gait.
+        self.rewards.leg_style.weight = -4.0
+        self.rewards.leg_style.params["gait_reward_name"] = "gait"
+        self.rewards.leg_style.params["stance_knee_limit"] = 0.12
+        self.rewards.leg_style.params["fast_stance_knee_limit"] = 0.45
+        self.rewards.leg_style.params["swing_knee_min"] = 0.35
+        self.rewards.leg_style.params["fast_swing_knee_min"] = 0.55
+        self.rewards.leg_style.params["swing_weight"] = 0.25
+        self.rewards.leg_style.params["hip_weight"] = 0.1
+        # 髋带动大腿、膝屈曲、踝补偿脚掌俯仰；仅在腾空摆腿中段柔性约束。
+        self.rewards.leg_style.params["pitch_weight"] = 0.5
+        self.rewards.leg_style.params["pitch_tolerance"] = 0.15
+        self.rewards.arm_body_coordination.weight = -1.0
+        self.rewards.arm_body_coordination.params["gait_reward_name"] = "gait"
+        self.rewards.arm_body_coordination.params["min_arm_scale"] = 0.4
+        self.rewards.arm_body_coordination.params["max_arm_scale"] = 1.0
+        self.rewards.arm_body_coordination.params["position_tolerance"] = 0.05
+        self.rewards.arm_body_coordination.params["velocity_weight"] = 0.15
+        self.rewards.arm_body_coordination.params["waist_weight"] = 0.5
+        self.rewards.arm_body_coordination.params["waist_yaw_gain"] = 0.2
+        self.rewards.arm_body_coordination.params["max_waist_yaw"] = 0.15
+        self.rewards.upper_body_style.weight = -2.0
+        self.rewards.upper_body_style.params["gait_reward_name"] = "gait"
+        self.rewards.upper_body_style.params["min_elbow_offset"] = -0.1
+        self.rewards.upper_body_style.params["max_elbow_offset"] = -0.6
+        self.rewards.upper_body_style.params["arm_tolerance"] = 0.1
+        self.rewards.upper_body_style.params["elbow_tolerance"] = 0.15
+        self.rewards.upper_body_style.params["waist_tolerance"] = 0.08
+        self.rewards.cycle_symmetry.weight = -1.0
+        self.rewards.cycle_symmetry.params["sensor_names"] = ["height_scanner_left", "height_scanner_right"]
+        self.rewards.cycle_symmetry.params["gait_reward_name"] = "gait"
+        self.rewards.cycle_symmetry.params["posture_tolerance"] = 0.05
+        self.rewards.cycle_symmetry.params["amplitude_tolerance"] = 0.05
+        self.rewards.cycle_symmetry.params["command_tolerance"] = 0.15
+        self.rewards.cycle_symmetry.params["terrain_tolerance"] = 0.05
 
-        # Single support: encourage an extended knee, with about 7 deg of slack.
-        # Touchdown/double support: allow cushioning; swing stays unrestricted.
-        self.rewards.stance_knee_flexion.weight = -4.0
-        self.rewards.stance_knee_flexion.params["max_stance_flexion"] = 0.12
-        self.rewards.stance_knee_flexion.params["walk_speed"] = 1.0
-        self.rewards.stance_knee_flexion.params["fast_speed"] = 2.5
-        self.rewards.stance_knee_flexion.params["max_fast_flexion"] = 0.45
-        self.rewards.stance_knee_flexion.params["max_transition_flexion"] = 0.30
-        self.rewards.stance_knee_flexion.params["contact_ramp_s"] = (0.04, 0.12)
-
-        # Bend during mid-swing; release before the estimated landing time.
-        self.rewards.swing_knee_flexion.weight = -1.0
-        self.rewards.swing_knee_flexion.params["min_flexion"] = 0.35
-        self.rewards.swing_knee_flexion.params["min_fast_flexion"] = 0.55
-        self.rewards.swing_knee_flexion.params["speed_range"] = (1.0, 2.5)
-        self.rewards.swing_knee_flexion.params["swing_duration_range"] = (0.20, 0.50)
-        self.rewards.swing_knee_flexion.params["initial_swing_duration"] = 0.30
-
-        # Prefer ground support at walking speeds; permit flight when running.
+        # Constraint：支撑与足部接触
         self.rewards.flight_phase.weight = -0.5
+        self.rewards.flight_phase.params["command_name"] = "base_velocity"
+        self.rewards.flight_phase.params["speed_threshold"] = 0.1
         self.rewards.flight_phase.params["running_speed_range"] = (1.0, 2.0)
         self.rewards.flight_phase.params["air_time_tolerance"] = 0.02
-
-        self.rewards.foot_clearance.weight = 1.0
-        self.rewards.foot_clearance.params["target_height"] = 0.10
-        self.rewards.foot_clearance.params["std"] = 0.08
-        self.rewards.foot_clearance.params["tanh_mult"] = 2.0
-
         self.rewards.feet_slide.weight = -0.5
-        self.rewards.feet_stumble.weight = -0.04
+        self.rewards.feet_stumble.weight = -0.1
         self.rewards.feet_stumble.params["threshold"] = 4.0
 
         # ----------------------------------------------------------
-        # Arm <-> opposite hip coordination
-        # ----------------------------------------------------------
-        self.rewards.diagonal_arm_follow_hip_penalty.weight = -1.0  # -0.60
-        self.rewards.diagonal_arm_follow_hip_penalty.params["min_scale"] = 0.40
-        self.rewards.diagonal_arm_follow_hip_penalty.params["max_scale"] = 1.0
-        self.rewards.diagonal_arm_follow_hip_penalty.params["min_speed"] = 0.10
-        self.rewards.diagonal_arm_follow_hip_penalty.params["max_speed"] = 2.00
-        self.rewards.diagonal_arm_follow_hip_penalty.params["command_threshold"] = 0.10
-        # URDF: positive shoulder_pitch and hip_pitch both swing toward body -X.
-        self.rewards.diagonal_arm_follow_hip_penalty.params["mirror_sign"] = 1.0
-        self.rewards.diagonal_arm_follow_hip_penalty.params["remove_hip_mean"] = True
-        self.rewards.diagonal_arm_follow_hip_penalty.params["position_tolerance"] = 0.05
-
-        # ----------------------------------------------------------
-        # Arm posture
-        # ----------------------------------------------------------
-        self.rewards.arm_posture.weight = -1.0  # -0.04
-        self.rewards.arm_posture.params["min_speed"] = 0.1
-        self.rewards.arm_posture.params["max_speed"] = 2.0
-        self.rewards.arm_posture.params["min_elbow_offset"] = -0.10
-        self.rewards.arm_posture.params["max_elbow_offset"] = -0.6
-
-        # ----------------------------------------------------------
-        # Waist posture & Hip roll/yaw posture
-        # ----------------------------------------------------------
-        self.rewards.waist_posture.weight = -0.50
-        self.rewards.waist_posture.params["command_name"] = "base_velocity"
-
-        self.rewards.hip_roll_yaw_posture.weight = -0.10
-        self.rewards.hip_roll_yaw_posture.params["command_name"] = "base_velocity"
-
-        # ----------------------------------------------------------
-        # Smoothness / energy
+        # Constraint：动作平滑与能耗
         # ----------------------------------------------------------
         self.rewards.action_rate_l2.weight = -0.02
+        self.rewards.action_smoothness_l2.weight = -0.01
         self.rewards.joint_acc.weight = -2.5e-7
         self.rewards.joint_torques.weight = -1.0e-7
-        # Absolute mechanical power (W); RewardManager applies the control dt.
         self.rewards.joint_mechanical_power.weight = -2.0e-4
 
         # ----------------------------------------------------------
-        # Limits & Contacts & Episode
+        # Constraint：限位、碰撞与终止
         # ----------------------------------------------------------
-        self.rewards.joint_limits.weight = -1.0
+        self.rewards.joint_pos_limits.weight = -1.0
         self.rewards.joint_torque_limits.weight = 0.0
 
         self.rewards.undesired_contacts.weight = -1.0
         self.rewards.undesired_contacts.params["threshold"] = 1.0
 
-        # self.rewards.alive.weight = 0.25
-        self.rewards.terminated.weight = -2.0
+        self.rewards.terminated.weight = -100.0
 
         # Isaac Lab skips computing zero-weight terms, but still registers and
         # displays them. None keeps them out of RewardManager and its logs.
@@ -224,8 +196,8 @@ class QminiFlatEnvCfg_PLAY(QminiFlatEnvCfg):
         super().__post_init__()
         self.scene.num_envs = 50
         self.scene.env_spacing = 2.5
-        self.events.base_external_force_torque = None
-        self.events.push_robot = None
+        self.events.external_wrench = None # type: ignore
+        self.events.push_robot = None # type: ignore
 
 
 @configclass

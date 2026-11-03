@@ -22,10 +22,10 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.sensors import ContactSensorCfg, RayCasterCfg, patterns
 from isaaclab.sim import SimulationCfg
 from isaaclab.sim.spawners.lights import DomeLightCfg
-from isaaclab.sim.spawners.materials import MdlFileCfg
+from isaaclab.sim.spawners.materials import PreviewSurfaceCfg
 from isaaclab.terrains import TerrainImporterCfg
 from isaaclab.utils import configclass
-from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR, ISAACLAB_NUCLEUS_DIR
+from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 from isaaclab.utils.noise import UniformNoiseCfg as Unoise
 from isaaclab_newton.physics import (
     MJWarpSolverCfg,
@@ -45,6 +45,14 @@ from .. import mdp
 from ..mdp.terrains import ROUGH_TERRAINS_CFG
 
 WHEEL_SCANNER_NAMES = ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner", "rr_wheel_scanner"]
+# 两项步态奖励共用时序；actor/critic 相位观测直接读取奖励参数与启用条件。
+GAIT_PERIOD = 0.5
+GAIT_FREQUENCY = None  # Hz；设定后覆盖 GAIT_PERIOD。
+GAIT_DUTY_FACTOR = 0.5  # 每条腿支撑相占比。
+GAIT_PHASE_OFFSETS = (0.0, 0.5, 0.5, 0.0)  # FL、FR、RL、RR；叠加在观测的全局相位上。
+# 步态切换与对角轮距约束共用：局部累计二阶高度差在此区间内平滑过渡。
+TERRAIN_STEP_THRESHOLD = 0.03
+TERRAIN_STEP_FULL_HEIGHT = 0.06
 
 ##
 # Physics backend presets
@@ -55,7 +63,10 @@ WHEEL_SCANNER_NAMES = ["fl_wheel_scanner", "fr_wheel_scanner", "rl_wheel_scanner
 class RoughPhysicsCfg(PresetCfg):
     """Shared backend presets for locomotion velocity environments."""
 
-    isaacsim_physx = PhysxCfg(gpu_max_rigid_patch_count=10 * 2**15)
+    isaacsim_physx = PhysxCfg(
+        gpu_max_rigid_patch_count=10 * 2**15,
+        gpu_collision_stack_size=2**28,  # 256 MiB：为 4096 环境的地形碰撞预留容量。
+    )
     newton_mjwarp = NewtonCfg(
         solver_cfg=MJWarpSolverCfg(
             njmax=1000,
@@ -95,10 +106,10 @@ class MySceneCfg(InteractiveSceneCfg):
             static_friction=1.0,
             dynamic_friction=1.0,
         ),
-        visual_material=MdlFileCfg(
-            mdl_path=f"{ISAACLAB_NUCLEUS_DIR}/Materials/TilesMarbleSpiderWhiteBrickBondHoned/TilesMarbleSpiderWhiteBrickBondHoned.mdl",
-            project_uvw=True,
-            texture_scale=(0.25, 0.25),
+        # 本地纯色材质，避免 play 时下载远程 MDL 和 8K 地面纹理。
+        visual_material=PreviewSurfaceCfg(
+            diffuse_color=(0.45, 0.45, 0.45),
+            roughness=0.8,
         ),
         debug_vis=False,
     )
@@ -110,7 +121,7 @@ class MySceneCfg(InteractiveSceneCfg):
         prim_path="{ENV_REGEX_NS}/Robot/Geometry/(?!.*base_link/).*base_link",
         offset=RayCasterCfg.OffsetCfg(pos=(0.0, 0.0, 20.0)),
         ray_alignment="yaw",
-        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.5, 1.0]), # type: ignore
+        pattern_cfg=patterns.GridPatternCfg(resolution=0.1, size=[1.4, 1.0]), # type: ignore
         debug_vis=False,
         mesh_prim_paths=["/World/ground"],
         global_world_only=True,
@@ -188,13 +199,13 @@ class CommandsCfg:
         resampling_time_range=(20.0, 20.0),
         rel_standing_envs=0.05,
         # 先覆盖沿轮子滚动方向的越障，仍保留横移和转向训练。
-        moving_proportions={"x": 0.3, "y": 0.05, "yaw": 0.15, "mix": 0.5},
-        heading_command=True,
+        moving_proportions={"x": 0.3, "y": 0.2, "yaw": 0.2, "mix": 0.3},
+        heading_command=False,
         rel_heading_envs=1.0,
         heading_control_stiffness=0.5,
         debug_vis=True,
         ranges=mdp.GroupedVelocityCommandCfg.Ranges(
-            lin_vel_x=(-1.0, 1.5), lin_vel_y=(-1.0, 1.0), ang_vel_z=(-1.0, 1.0), heading=(-math.pi, math.pi)
+            lin_vel_x=(-1.0, 1.5), lin_vel_y=(-1.0, 1.0), ang_vel_z=(-2.0, 2.0), heading=(-math.pi, math.pi)
         ),
     )
 
@@ -260,6 +271,9 @@ class ObservationsCfg:
             noise=Unoise(n_min=-0.1, n_max=0.1),
             clip=(-1.0, 1.0),
         )
+        gait_phase = ObsTerm(
+            func=mdp.gait_phase,
+        )
 
         def __post_init__(self):
             self.enable_corruption = True
@@ -289,6 +303,10 @@ class ObservationsCfg:
             func=isaaclab_mdp.generated_commands,
             params={"command_name": "base_velocity"},
             scale=(2.0, 2.0, 2.0),
+        )
+        # 当前训练 actor 也读取 critic 组；纯 vx 平地/静止为零，仅 gait 模式显示相位。
+        gait_phase = ObsTerm(
+            func=mdp.gait_phase,
         )
 
         # =========================================================
@@ -359,8 +377,8 @@ class ObservationsCfg:
             scale=1.0,
             clip=(-1.5, 1.5),
         )
-        wheel_scan_height_range = ObsTerm(
-            func=mdp.wheel_scan_height_range,
+        wheel_height_scan = ObsTerm(
+            func=mdp.wheel_height_scan,
             params={
                 "sensor_names": [
                     "fl_wheel_scanner",
@@ -368,9 +386,10 @@ class ObservationsCfg:
                     "rl_wheel_scanner",
                     "rr_wheel_scanner",
                 ],
+                "wheel_radius": 0.086,
             },
-            scale=5.0,
-            clip=(0.0, 1.5),
+            scale=1.0,
+            clip=(-1.5, 1.5),
         )
 
         # =========================================================
@@ -430,6 +449,11 @@ class ObservationsCfg:
         # =========================================================
         # 7. 动力学扰动（机身坐标系）
         # =========================================================
+        base_mass_ratio = ObsTerm(
+            func=mdp.base_mass_ratio,
+            params={"event_name": "add_base_mass"},
+            scale=1.0,
+        )
         base_com_offset = ObsTerm(
             func=mdp.base_com_offset_observation,
             params={"event_name": "base_com"},
@@ -561,8 +585,11 @@ class EventsCfg:
 
 @configclass
 class RewardsCfg:
-    """轮足机器人强化学习奖励配置。"""
+    """按用途排列奖励项；名称、权重及多 critic 分组保持兼容。"""
 
+    # ============================================================
+    # 1. 速度跟踪
+    # ============================================================
     track_lin_vel_xy_exp = RewTerm(
         func=isaaclab_mdp.track_lin_vel_xy_exp,
         weight=3.0,
@@ -573,47 +600,214 @@ class RewardsCfg:
     )
     track_ang_vel_z_exp = RewTerm(
         func=isaaclab_mdp.track_ang_vel_z_exp,
-        weight=2.0,
+        weight=1.5,
         params={
             "command_name": "base_velocity",
             "std": math.sqrt(0.25),
         },
     )
+    # XY 指令与实际机体系速度的平方误差；停滞、反向及超速均惩罚，大误差不饱和。
+    track_lin_vel_xy_error = RewTerm(
+        func=mdp.lin_vel_xy_tracking_error_l2,
+        weight=-1.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
+    # yaw 角速度平方误差；未转动、反向转动及转速过大均惩罚。
+    track_ang_vel_z_error = RewTerm(
+        func=mdp.ang_vel_z_tracking_error_l2,
+        weight=-2.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot"),
+        },
+    )
 
+    # ============================================================
+    # 2. 机体稳定与关节姿态
+    # ============================================================
     lin_vel_z_l2 = RewTerm(
         func=isaaclab_mdp.lin_vel_z_l2,
         weight=-2.0,
     )
+
     ang_vel_xy_l2 = RewTerm(
         func=isaaclab_mdp.ang_vel_xy_l2,
         weight=-0.05,
     )
+
     base_height_l2 = RewTerm(
-        func=isaaclab_mdp.base_height_l2,
-        weight=-5.0,
+        func=mdp.base_height_l2,
+        weight=-1.0,
         params={
-            "target_height": 0.42,
+            "target_height": 0.38,  # 默认关节姿态对应的轮底到机身高度约 0.381 m。
+            "height_std": 0.10,  # 偏低 10 cm 的代价为 1，避免低姿态滚动只受很弱惩罚。
             "sensor_cfg": SceneEntityCfg("height_scanner"),
         },
     )
+
     gravity_alignment = RewTerm(
         func=mdp.gravity_z_alignment,
-        weight=0.25,
+        weight=0.2,
         params={
-            "std": 0.2,
+            "std": 0.15,
         },
     )
 
-    action_rate_l2 = RewTerm(
-        func=isaaclab_mdp.action_rate_l2,
-        weight=-0.01,
-    )
-    action_smoothness_l2 = RewTerm(
-        func=mdp.action_smoothness_l2,
-        weight=-0.001,
+    # 对角腿姿态镜像：FL ↔ RR、FR ↔ RL；hip 反号，thigh/calf 同号。
+    diagonal_joint_symmetry = RewTerm(
+        func=mdp.diagonal_joint_symmetry_l2,
+        weight=-1.0,
+        params={
+            "left_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[f"{leg}_{joint}" for leg in ("FL", "FR") for joint in ("hip", "thigh", "calf")],
+                preserve_order=True,
+            ),
+            "right_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=[f"{leg}_{joint}" for leg in ("RR", "RL") for joint in ("hip", "thigh", "calf")],
+                preserve_order=True,
+            ),
+        },
     )
 
-    wheel_contact_slip = RewTerm(
+    joint_pose_deviation = RewTerm(
+        func=mdp.stand_still_joint_deviation,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                joint_names=LEG_JOINT_NAMES,
+                preserve_order=True,
+            ),
+            "command_name": "base_velocity",
+            "command_threshold": 0.1,  # 姿态系数过渡中心。
+            "command_transition_width": 0.15,  # 总宽度：vx、vy、yaw 最大绝对值在 0.05–0.15 平滑过渡。
+            "stand_still_scale": 1.5,
+            "moving_hip_scale": 1.0,
+            "moving_thigh_scale": 1.0,
+            "moving_calf_scale": 1.0,
+        },
+    )
+
+
+
+
+    # ============================================================
+    # 3. 步态与轮子约束
+    # ============================================================
+    # 诊断门控、四轮摆动/支撑、关节执行误差与机身高度；始终返回 0。
+    # weight 必须非零，否则 RewardManager 会跳过调用；指标见 Test/*。
+    # test = RewTerm(
+    #     func=mdp.GaitScanTest,
+    #     weight=1.0,
+    #     params={
+    #         "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+    #         "leg_joint_cfg": SceneEntityCfg("robot", joint_names=LEG_JOINT_NAMES, preserve_order=True),
+    #         "print_interval": 0,  # 只写训练日志。
+    #     },
+    # )
+
+    # 静止时四轮支撑。
+    standing_wheel_contact = RewTerm(
+        func=mdp.standing_wheel_contact_penalty,
+        weight=-0.5,
+        params={
+            "command_name": "base_velocity",
+            "command_threshold": 0.1,  # vx、vy、yaw 均在死区内时要求四轮支撑。
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "contact_threshold": 10.0,  # 向上的法向力必须大于 1 N。
+        },
+    )
+
+    # vy/yaw 任一超出死区：任何地形启用高度步态，允许同时有 vx。
+    explicit_diagonal_gait = RewTerm(
+        func=mdp.diagonal_gait_contact_penalty,
+        weight=-5.0,
+        params={
+            "enabled": True,
+            "command_name": "base_velocity",
+            "period": GAIT_PERIOD,  # 完整周期，秒；与观测共享。
+            "frequency": GAIT_FREQUENCY,
+            "duty_factor": GAIT_DUTY_FACTOR,
+            "phase_offsets": GAIT_PHASE_OFFSETS,  # FL+RR 与 FR+RL 对角交替。
+            "command_threshold": 0.1,
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "contact_threshold": 1.0,
+            "asset_cfg": SceneEntityCfg(
+                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True,
+            ),
+            "wheel_sensor_names": WHEEL_SCANNER_NAMES,
+            "swing_height": 0.03,  # 摆动中点轮底高于轮边扫描最高地面，m。
+            "wheel_radius": 0.086,
+            "height_tracking_scale": 1.0,
+            "height_std": 0.02,  # 高度误差尺度，独立于抬腿高度。
+        },
+    )
+
+    # 仅纯 vx：无突变四轮滚动，有突变过渡到 gait；与上项互斥。
+    pure_x_terrain_gait = RewTerm(
+        func=mdp.pure_x_terrain_gait_penalty,
+        weight=-2.0,
+        params={
+            "enabled": True,
+            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+            "step_threshold": TERRAIN_STEP_THRESHOLD,  # 不超过此突变强度时四轮滚动。
+            "step_full_height": TERRAIN_STEP_FULL_HEIGHT,  # 达到此突变强度时完全使用步态。
+            "pure_x_tolerance": None,  # 跟随 command_threshold，与横移/转向奖励互补。
+            "command_name": "base_velocity",
+            "period": GAIT_PERIOD,  # 完整周期，秒；与观测共享。
+            "frequency": GAIT_FREQUENCY,
+            "duty_factor": GAIT_DUTY_FACTOR,
+            "phase_offsets": GAIT_PHASE_OFFSETS,  # FL+RR 与 FR+RL 对角交替。
+            "command_threshold": 0.1,
+            "sensor_cfg": SceneEntityCfg(
+                "contact_forces",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "contact_threshold": 1.0,
+            "asset_cfg": SceneEntityCfg(
+                "robot", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"], preserve_order=True,
+            ),
+            "wheel_sensor_names": WHEEL_SCANNER_NAMES,
+            "swing_height": 0.03,  # 摆动中点高于轮边扫描最高地面，m。
+            "wheel_radius": 0.086,
+            "height_tracking_scale": 1.0,
+            "height_std": 0.05,
+        },
+    )
+
+    # 世界坐标三维对角轮距差；无突变完整约束，有突变平滑关闭。
+    diagonal_distance_difference = RewTerm(
+        func=mdp.diagonal_wheel_distance_difference,
+        weight=-5.0,
+        params={
+            "asset_cfg": SceneEntityCfg(
+                "robot",
+                body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
+                preserve_order=True,
+            ),
+            "tolerance": 0.03,
+            "height_sensor_cfg": SceneEntityCfg("height_scanner"),
+            "step_threshold": TERRAIN_STEP_THRESHOLD,  # 不超过此突变强度时完整启用。
+            "step_full_height": TERRAIN_STEP_FULL_HEIGHT,  # 达到此突变强度时完全关闭。
+        },
+    )
+
+    # 轮子与地面的切向滑动。
+    wheel_slip = RewTerm(
         func=mdp.WheelContactSlip,
         weight=-0.1,
         params={
@@ -628,70 +822,29 @@ class RewardsCfg:
                 "rl_wheel_contact",
                 "rr_wheel_contact",
             ],
-            "slip_threshold": 0.05,         
-            "contact_threshold": 2.0,      # 法向接触力阈值：1 N。
+            "slip_threshold": 0.05,
+            "contact_threshold": 2.0,      # 法向接触力阈值：2 N。
         },
     )
 
-    # diagonal_distance_difference = RewTerm(
-    #     func=mdp.diagonal_wheel_distance_difference,
-    #     weight=-0.1,
-    #     params={
-    #         "asset_cfg": SceneEntityCfg(
-    #             "robot",
-    #             body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
-    #             preserve_order=True,
-    #         ),
-    #         "tolerance": 0.03, 
-    #     },
-    # )
-
-    # explicit_diagonal_gait = RewTerm(
-    #     func=mdp.diagonal_gait_contact_penalty,
-    #     weight=-0.5,
-    #     params={
-    #         "enabled": True,
-    #         "command_name": "base_velocity",
-    #         "period": 0.4,  # 完整周期，秒。
-    #         "frequency": None,  # Hz；设定后覆盖 period。
-    #         "duty_factor": 0.5,  # 支撑相占比。
-    #         "phase_offsets": (0.0, 0.5, 0.5, 0.0),  # FL、FR、RL、RR。
-    #         "command_threshold": 0.1,  # sqrt(vy² + yaw²) 启用阈值。
-    #         "sensor_cfg": SceneEntityCfg(
-    #             "contact_forces",
-    #             body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"],
-    #             preserve_order=True,
-    #         ),
-    #         "contact_threshold": 1.0,
-    #     },
-    # )
-
     # ============================================================
-    # 6. 关节姿态与物理约束 (Joint Constraints)
+    # 4. 动作平滑与能耗
     # ============================================================
-    joint_pose_deviation = RewTerm(
-        func=mdp.stand_still_joint_deviation,
-        weight=-1.0,
-        params={
-            "asset_cfg": SceneEntityCfg(
-                "robot",
-                joint_names=LEG_JOINT_NAMES,
-                preserve_order=True,
-            ),
-            "command_name": "base_velocity",
-            "command_threshold": 0.1,
-            "stand_still_scale": 1.5,
-            "moving_hip_scale": 0.2,
-            "moving_thigh_scale": 0.08,
-            "moving_calf_scale": 0.08,
-        },
+    action_rate_l2 = RewTerm(
+        func=isaaclab_mdp.action_rate_l2,
+        weight=-0.01,
     )
 
-    
+    action_smoothness_l2 = RewTerm(
+        func=mdp.action_smoothness_l2,
+        weight=-0.001,
+    )
+
     joint_torques_l2 = RewTerm(
         func=isaaclab_mdp.joint_torques_l2,
         weight=-1.0e-5,
     )
+
     leg_joint_acc_l2 = RewTerm(
         func=isaaclab_mdp.joint_acc_l2,
         weight=-1.5e-7,
@@ -702,6 +855,7 @@ class RewardsCfg:
             ),
         },
     )
+
     wheel_joint_acc_l2 = RewTerm(
         func=isaaclab_mdp.joint_acc_l2,
         weight=-1.0e-9,
@@ -712,11 +866,31 @@ class RewardsCfg:
             ),
         },
     )
-    
+
+    # ============================================================
+    # 5. 接触与关节安全
+    # ============================================================
+    # 轮子接触合力过大或水平碰撞。
+    wheel_stumble = RewTerm(
+        func=mdp.wheel_lateral_contact_force,
+        weight=-0.1,
+        params={
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=["FL_foot", "FR_foot", "RL_foot", "RR_foot"]),
+            "force_ratio": 4,
+            "force_limit": 180.0,
+        },
+    )
+
     joint_pos_limits = RewTerm(
-        func=isaaclab_mdp.joint_pos_limits,
+        func=mdp.joint_pos_limits,
         weight=-1.0,
         params={
+            # 弧度范围 (下限, 上限)；None 沿用各关节原有软限位。
+            "joint_ranges": {
+                ".*_hip": (-0.25,0.25),
+                ".*_thigh": None,
+                ".*_calf": None,
+            },
             "asset_cfg": SceneEntityCfg(
                 "robot",
                 joint_names=LEG_JOINT_NAMES,
@@ -724,6 +898,7 @@ class RewardsCfg:
             ),
         },
     )
+
     joint_torque_limits = RewTerm(
         func=mdp.joint_torque_limits,
         weight=-0.01,
@@ -734,20 +909,22 @@ class RewardsCfg:
             ),
         },
     )
-    termination_penalty = RewTerm(
-        func=isaaclab_mdp.is_terminated,
-        weight=-100.0,
-    )
+
     undesired_contacts = RewTerm(
         func=isaaclab_mdp.undesired_contacts,
         weight=-1.0,
         params={
             "sensor_cfg": SceneEntityCfg(
                 "contact_forces",
-                body_names="(?!(?:FL|FR|RL|RR)_foot$).*",  
+                body_names="(?!(?:FL|FR|RL|RR)_foot$).*",
             ),
             "threshold": 1.0,
         },
+    )
+
+    termination_penalty = RewTerm(
+        func=isaaclab_mdp.is_terminated,
+        weight=-100.0,
     )
 
 @configclass
@@ -766,6 +943,15 @@ class CurriculumCfg:
     """Curriculum terms for the MDP."""
 
     terrain_levels = CurrTerm(func=isaaclab_velocity_mdp.terrain_levels_vel) # type: ignore
+
+    command_levels_lin_vel = CurrTerm(
+        func=mdp.command_levels_lin_vel, # type: ignore
+        params={"reward_term_name": "track_lin_vel_xy_exp", "range_multiplier": (0.2, 1.0)},
+    )
+    command_levels_ang_vel = CurrTerm(
+        func=mdp.command_levels_ang_vel, # type: ignore
+        params={"reward_term_name": "track_ang_vel_z_exp", "range_multiplier": (0.2, 1.0)},
+    )
 
 
 ##
@@ -823,9 +1009,13 @@ class LocomotionVelocityRoughEnvCfg(ManagerBasedRLEnvCfg):
     def play_mode(self):
         """Play-mode overrides shared by the velocity-tracking environments."""
         super().play_mode()
+        # 播放直接使用配置的完整速度范围，不在首次 reset 时缩小至 10%。
+        self.curriculum.command_levels_lin_vel = None # type: ignore
+        self.curriculum.command_levels_ang_vel = None # type: ignore
         # spawn the robot randomly in the grid (instead of their terrain levels)
         self.scene.terrain.max_init_terrain_level = None
         # reduce the number of terrains to save memory
+        self.episode_length_s = 150
         if self.scene.terrain.terrain_generator is not None:
             self.scene.terrain.terrain_generator.num_rows = 5
             self.scene.terrain.terrain_generator.num_cols = 5

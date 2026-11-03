@@ -1,0 +1,24 @@
+# Training on MimicKit_Data/motions/humanoid/long; tune as needed.
+env_config: humanoid_local_obs.yaml
+motion_file: datasets/dataset_humanoid_locomotion.yaml
+control_freq: 30
+batch_size: 512
+lr: 0.0001
+num_iterations: 100000
+num_samples_stat: 10000
+output_iter: 2000
+grad_clip_norm: 1.0
+T: 100
+arch_name: DiT
+num_layers: 4
+num_attention_heads: 4
+attention_head_dim: 64
+dropout: 0.0
+estimate_mode: epsilon
+loss_type: l2
+noise_schedule_mode: squaredcos_cap_v2
+normalizer_std_clip: 0.01
+model_ema: true
+model_ema_decay: 0.9999
+model_ema_steps: 1
+model_ema_update_after: 100

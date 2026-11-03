@@ -13,6 +13,8 @@ videos/
 wandb/
 *.log
 
-.vscode/settings.json
-.vscode/launch.json
+.vscode/
 pyrightconfig.json
+/tools/mothion_data/
+/tools/smp_tools/data/
+/tests/

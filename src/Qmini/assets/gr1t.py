@@ -6,7 +6,7 @@ URDF before this configuration was created.
 """
 
 import isaaclab.sim as sim_utils
-from isaaclab.actuators import DCMotorCfg
+from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
 from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxRigidBodyCfg
 
@@ -17,9 +17,6 @@ GR1T2_CFG = ArticulationCfg(
         asset_path=str(QMINI_ASSETS_DIR / "gr1t2_description" / "urdf" / "GR1T2_new.urdf"),
         fix_base=False,
         activate_contact_sensors=True,
-        # Isaac Lab 3.0 URDF importer no longer supports
-        # replace_cylinders_with_capsules. Configure collision geometry in URDF.
-        # Keep fixed joints unmerged to preserve link_torso / link_imu names.
         merge_fixed_joints=False,
         joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
             gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(stiffness=0, damping=0)
@@ -45,8 +42,11 @@ GR1T2_CFG = ArticulationCfg(
         joint_vel={".*": 0.0},
     ),
     soft_joint_pos_limit_factor=0.9,
+    # Effort (N·m) and rated velocity (rad/s) match GR1T2_new.urdf <limit>.
+    # IdealPD clips effort; actuator_velocity_limit is model metadata, not a solver clamp.
+    # Physics joint limits inherit the URDF; saturation_effort belongs to DCMotorCfg.
     actuators={
-        "left_leg": DCMotorCfg(
+        "left_leg": IdealPDActuatorCfg(
             joint_names_expr=[
                 "l_hip_roll",
                 "l_hip_yaw",
@@ -89,9 +89,8 @@ GR1T2_CFG = ArticulationCfg(
             },
             armature=0.01,
             friction=0.0,
-            saturation_effort=225.0,
         ),
-        "right_leg": DCMotorCfg(
+        "right_leg": IdealPDActuatorCfg(
             joint_names_expr=[
                 "r_hip_roll",
                 "r_hip_yaw",
@@ -134,9 +133,8 @@ GR1T2_CFG = ArticulationCfg(
             },
             armature=0.01,
             friction=0.0,
-            saturation_effort=225.0,
         ),
-        "waist": DCMotorCfg(
+        "waist": IdealPDActuatorCfg(
             joint_names_expr=[
                 "joint_waist_yaw",
                 "joint_waist_pitch",
@@ -156,9 +154,8 @@ GR1T2_CFG = ArticulationCfg(
             },
             armature=0.01,
             friction=0.0,
-            saturation_effort=66.0,
         ),
-        "left_arm": DCMotorCfg(
+        "left_arm": IdealPDActuatorCfg(
             joint_names_expr=[
                 "l_shoulder_pitch",
                 "l_shoulder_roll",
@@ -196,9 +193,8 @@ GR1T2_CFG = ArticulationCfg(
             },
             armature=0.01,
             friction=0.0,
-            saturation_effort=38.0,
         ),
-        "right_arm": DCMotorCfg(
+        "right_arm": IdealPDActuatorCfg(
             joint_names_expr=[
                 "r_shoulder_pitch",
                 "r_shoulder_roll",
@@ -236,7 +232,6 @@ GR1T2_CFG = ArticulationCfg(
             },
             armature=0.01,
             friction=0.0,
-            saturation_effort=38.0,
         ),
     },
 )

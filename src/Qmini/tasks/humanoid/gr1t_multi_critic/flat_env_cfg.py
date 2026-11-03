@@ -1,4 +1,4 @@
-"""Grouped-reward copy of the GR1T flat-terrain task."""
+"""GR1T environment settings shared with the grouped-reward specialization."""
 
 from __future__ import annotations
 
@@ -6,12 +6,12 @@ from isaaclab.managers import RewardTermCfg
 from isaaclab.utils.configclass import configclass
 
 from Qmini.tasks.humanoid.gr1t.env.gr1t_env_cfg import RewardsCfg as FlatRewardsCfg
-from Qmini.tasks.humanoid.gr1t.flat_env_cfg import QminiFlatEnvCfg
+from Qmini.tasks.humanoid.gr1t.flat_env_cfg import QminiFlatEnvCfg, QminiFlatEnvCfg_PLAY
 
 
 @configclass
 class TaskRewardsCfg:
-    """Command tracking and the minimum stability required to walk."""
+    """Task: command tracking, upright posture, terrain-relative height, and standing."""
 
     track_lin_vel_xy: RewardTermCfg | None = None
     track_ang_vel_z: RewardTermCfg | None = None
@@ -24,22 +24,17 @@ class TaskRewardsCfg:
 
 @configclass
 class CoordinationRewardsCfg:
-    """Leg, arm, and posture coordination rewards from the flat task."""
+    """Coordination: body-motion damping, lateral sway, gait, footholds, and limb style."""
 
     base_motion_penalty: RewardTermCfg | None = None
     torso_motion_penalty: RewardTermCfg | None = None
     base_lateral_sway: RewardTermCfg | None = None
-    feet_air_time: RewardTermCfg | None = None
-    stance_knee_flexion: RewardTermCfg | None = None
-    swing_knee_flexion: RewardTermCfg | None = None
-    leg_pitch_coordination: RewardTermCfg | None = None
-    leg_joint_symmetry: RewardTermCfg | None = None
-    diagonal_arm_follow_hip_penalty: RewardTermCfg | None = None
-    foot_clearance: RewardTermCfg | None = None
-    feet_step_symmetry: RewardTermCfg | None = None
-    arm_posture: RewardTermCfg | None = None
-    waist_posture: RewardTermCfg | None = None
-    hip_roll_yaw_posture: RewardTermCfg | None = None
+    gait: RewardTermCfg | None = None
+    foothold_flatness: RewardTermCfg | None = None
+    leg_style: RewardTermCfg | None = None
+    arm_body_coordination: RewardTermCfg | None = None
+    upper_body_style: RewardTermCfg | None = None
+    cycle_symmetry: RewardTermCfg | None = None
 
 
 @configclass
@@ -50,10 +45,11 @@ class ConstraintRewardsCfg:
     feet_stumble: RewardTermCfg | None = None
     flight_phase: RewardTermCfg | None = None
     action_rate_l2: RewardTermCfg | None = None
+    action_smoothness_l2: RewardTermCfg | None = None
     joint_acc: RewardTermCfg | None = None
     joint_torques: RewardTermCfg | None = None
     joint_mechanical_power: RewardTermCfg | None = None
-    joint_limits: RewardTermCfg | None = None
+    joint_pos_limits: RewardTermCfg | None = None
     joint_torque_limits: RewardTermCfg | None = None
     undesired_contacts: RewardTermCfg | None = None
     terminated: RewardTermCfg | None = None
@@ -71,10 +67,18 @@ class GR1TMultiCriticRewardsCfg:
     def from_flat(cls, flat: FlatRewardsCfg) -> GR1TMultiCriticRewardsCfg:
         """Move the already tuned flat reward terms into semantic groups."""
         grouped = cls()
+        assigned = set()
         for group_cfg in grouped.__dict__.values():
             for term_name in group_cfg.__dict__:
                 if hasattr(flat, term_name):
+                    if term_name in assigned:
+                        raise ValueError(f"GR1T reward assigned to multiple groups: {term_name}")
                     setattr(group_cfg, term_name, getattr(flat, term_name))
+                    assigned.add(term_name)
+
+        active = {name for name, term in vars(flat).items() if isinstance(term, RewardTermCfg) and term.weight != 0.0}
+        if active - assigned:
+            raise ValueError(f"Unassigned GR1T rewards: {sorted(active - assigned)}")
 
         return grouped
 
@@ -93,15 +97,13 @@ class GR1TMultiCriticFlatEnvCfg(QminiFlatEnvCfg):
 
 
 @configclass
-class GR1TMultiCriticFlatEnvCfg_PLAY(GR1TMultiCriticFlatEnvCfg):
-    """Reduced parallelism and disturbances for policy visualization."""
+class GR1TMultiCriticFlatEnvCfg_PLAY(QminiFlatEnvCfg_PLAY):
+    """Share GR1T playback settings, then group the resulting reward terms."""
 
     def __post_init__(self) -> None:
+        self.rewards = FlatRewardsCfg()
         super().__post_init__()
-        self.scene.num_envs = 50
-        self.scene.env_spacing = 2.5
-        self.events.base_external_force_torque = None
-        self.events.push_robot = None
+        self.rewards = GR1TMultiCriticRewardsCfg.from_flat(self.rewards)
 
 
 __all__ = [

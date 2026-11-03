@@ -12,17 +12,24 @@ from isaaclab_newton.physics import NewtonCfg
 
 
 
-def wheel_scan_height_range(env, sensor_names: list[str]):
-    """每个轮子九个扫描点的 Z 极差，按传入顺序返回 (num_envs, 4)，单位米。
+def wheel_height_scan(env, sensor_names: list[str], wheel_radius: float = 0.086):
+    """拼接四轮的完整高度扫描；每轮 3×3 点时返回 (num_envs, 36)，单位米。
 
-    扫描缺失时返回 1.5 m，避免将未知地形当作平地或输出 NaN。
+    按传入的 FL/FR/RL/RR 顺序拼接，保留各传感器原始射线排列。
+    每点为轮心 Z - wheel_radius - 地面 Z：正值表示离地，负值表示地形高于轮底。
+    射线起点的 1 m 偏移不包含在 data.pos_w 中，不应再次减去。
+    未命中的点返回 1.5 m，避免产生 NaN/Inf 或伪造平地读数。
     """
-    ranges = []
+    if len(sensor_names) != 4 or len(set(sensor_names)) != 4:
+        raise ValueError("Expected four distinct wheel scanners ordered FL, FR, RL, RR")
+    scans = []
     for name in sensor_names:
-        heights = env.scene.sensors[name].data.ray_hits_w.torch[..., 2]
-        height_range = heights.amax(dim=-1) - heights.amin(dim=-1)
-        ranges.append(torch.where(torch.isfinite(heights).all(dim=-1), height_range, 1.5))
-    return torch.stack(ranges, dim=-1)
+        data = env.scene.sensors[name].data
+        hits = data.ray_hits_w.torch
+        heights = data.pos_w.torch[:, 2, None] - wheel_radius - hits[..., 2]
+        valid = torch.isfinite(hits).all(dim=-1) & torch.isfinite(heights)
+        scans.append(torch.where(valid, heights, 1.5))
+    return torch.cat(scans, dim=-1)
 
 
 def action_history(env):

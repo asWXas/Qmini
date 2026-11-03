@@ -5,13 +5,13 @@
 
 from isaaclab.utils import configclass
 
-from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg
+from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg, RslRlPpoAlgorithmCfg, RslRlRNNModelCfg
 
 
 @configclass
 class AS2WRoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     num_steps_per_env = 24
-    max_iterations = 1500
+    max_iterations = 8000
     save_interval = 50
     experiment_name = "as2w_rough"
     # The environment must expose separate policy and critic observation groups.
@@ -25,7 +25,7 @@ class AS2WRoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
     critic = RslRlMLPModelCfg(
         hidden_dims=[512, 256, 128],
         activation="elu",
-        obs_normalization=False,
+        obs_normalization=True,
     )
     algorithm = RslRlPpoAlgorithmCfg(
         value_loss_coef=1.0,
@@ -52,3 +52,27 @@ class AS2WFlatPPORunnerCfg(AS2WRoughPPORunnerCfg):
         self.experiment_name = "as2w_flat"
         self.actor.hidden_dims = [128, 128, 128]
         self.critic.hidden_dims = [128, 128, 128]
+
+
+@configclass
+class AS2WRoughGRUPPORunnerCfg(AS2WRoughPPORunnerCfg):
+    """Recurrent PPO with one 256-unit GRU in both actor and critic."""
+
+    experiment_name = "as2w_rough_gru"
+    actor = RslRlRNNModelCfg(
+        hidden_dims=[512, 256, 128],
+        activation="elu",
+        obs_normalization=False,
+        rnn_type="gru",
+        rnn_hidden_dim=256,
+        rnn_num_layers=1,
+        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0, std_type="log"),
+    )
+    critic = RslRlRNNModelCfg(
+        hidden_dims=[512, 256, 128],
+        activation="elu",
+        obs_normalization=True,
+        rnn_type="gru",
+        rnn_hidden_dim=256,
+        rnn_num_layers=1,
+    )

@@ -1,38 +1,19 @@
-"""RSL-RL Multi-Critic PPO configuration for GR1T."""
+"""GR1T PPO settings shared with the multi-critic specialization."""
+
+from copy import deepcopy
 
 from isaaclab.utils.configclass import configclass
 
-from isaaclab_rl.rsl_rl import RslRlMLPModelCfg, RslRlOnPolicyRunnerCfg
-
 from Qmini.algo.multi_critic.cfg import RslRlMultiCriticPpoAlgorithmCfg
+from Qmini.tasks.humanoid.gr1t.agents.rsl_rl_ppo_cfg import PPORunnerCfg as GR1TPPORunnerCfg
 
 
-@configclass
-class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
-    """Use one actor and task/coordination/constraint value heads."""
-
-    class_name = "OnPolicyRunner"
-    num_steps_per_env = 24
-    max_iterations = 30000
-    save_interval = 150
-    experiment_name = "gr1t_flat_multi_critic"
-    obs_groups = {
-        "actor": ["policy"],
-        "critic": ["critic"],
-    }
-    actor = RslRlMLPModelCfg(
-        hidden_dims=[512, 256, 128],
-        activation="elu",
-        obs_normalization=False,
-        distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=1.0),
-    )
-    critic = RslRlMLPModelCfg(
-        hidden_dims=[512, 256, 128],
-        activation="elu",
-        obs_normalization=False,
-    )
-    algorithm = RslRlMultiCriticPpoAlgorithmCfg(
-        # Ordering must match GR1TMultiCriticRewardsCfg exactly.
+def _multi_critic_algorithm() -> RslRlMultiCriticPpoAlgorithmCfg:
+    # Keep PPO hyperparameters and symmetry synchronized, retaining the multi-head algorithm.
+    params = deepcopy(vars(GR1TPPORunnerCfg().algorithm))
+    params.pop("class_name")
+    return RslRlMultiCriticPpoAlgorithmCfg(
+        **params,
         critic_groups={
             "task": {"weight": 0.50},
             "coordination": {"weight": 0.25},
@@ -40,22 +21,17 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         },
         normalize_critic_weights=False,
         rnd_group=None,
-        value_loss_coef=1.0,
-        use_clipped_value_loss=True,
-        clip_param=0.2,
-        entropy_coef=0.005,
-        num_learning_epochs=5,
-        num_mini_batches=4,
-        learning_rate=1.0e-3,
-        schedule="adaptive",
-        gamma=0.99,
-        lam=0.95,
-        desired_kl=0.01,
-        max_grad_norm=1.0,
-        normalize_advantage_per_mini_batch=False,
-        rnd_cfg=None,
-        symmetry_cfg=None,
     )
+
+
+@configclass
+class PPORunnerCfg(GR1TPPORunnerCfg):
+    """Share GR1T networks and PPO tuning; use task/coordination/constraint value heads."""
+
+    class_name = "OnPolicyRunner"
+    experiment_name = "gr1t_flat_multi_critic"
+    obs_groups = {"actor": ["critic"], "critic": ["critic"]}
+    algorithm = _multi_critic_algorithm()
 
 
 __all__ = ["PPORunnerCfg"]

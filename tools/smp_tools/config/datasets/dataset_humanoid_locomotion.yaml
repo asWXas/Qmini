@@ -1,0 +1,24 @@
+# All clips from MimicKit_Data/motions/humanoid/long, with equal sampling weights.
+motions:
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk0.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk0_mirror.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk1.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk1_mirror.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk2.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk2_mirror.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk3.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_walk3_mirror.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_long_zombie.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_stealthy_walk0.pkl
+    weight: 1.0
+  - file: ../../../mothion_data/MimicKit_Data/motions/humanoid/long/humanoid_stealthy_walk1.pkl
+    weight: 1.0

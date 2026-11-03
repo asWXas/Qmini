@@ -30,3 +30,15 @@ for terrain in ("Flat", "Rough"):
             "default_agent": "rsl_rl",
         },
     )
+
+
+gym.register(
+    id="Qmini-Velocity-Rough-AS2W-GRU",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.env.as2w_env_cfg:AS2WRoughEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{__name__}.agent.rsl_rl_ppo_cfg:AS2WRoughGRUPPORunnerCfg",
+        "default_agent": "rsl_rl",
+    },
+)

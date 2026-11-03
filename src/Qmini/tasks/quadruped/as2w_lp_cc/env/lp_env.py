@@ -38,6 +38,8 @@ class LPCurriculumController:
                 raise ValueError("LP terrain columns must be a multiple of terrain type count")
 
     def record_step(self, reward):
+        if self.env.cfg.commands.base_velocity.xbox:
+            return
         self.returns += reward
         self.alive_steps += 1
         data = self.env.scene["robot"].data
@@ -96,6 +98,8 @@ class LPCurriculumController:
             terrain.env_origins[ids] = terrain.terrain_origins[levels, columns]
 
     def advance(self):
+        if self.env.cfg.commands.base_velocity.xbox:
+            return
         if self.sampler.advance():
             s = self.sampler
             visited = s.last_count > 0

@@ -1,30 +1,46 @@
-"""Local geometry for the four world-aligned 3 by 3 wheel scans."""
+"""Height-scan geometry shared by gait and terrain-dependent style rewards."""
+
+import math
 
 import torch
 
 
-def scan_step_height(hits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return the largest second height difference and complete-scan validity.
+class GridScanEdgeDetector:
+    """Adjacent second height differences on an evenly spaced rectangular scan.
 
-    A plane (including a slope) has zero second difference. An axis-aligned
-    step has a difference equal to its height. This is an edge indicator, not
-    an estimate of traversability; diagonal/rounded edges can give smaller values.
-    Missing rays must never become an artificial obstacle or a NaN reward.
+    Cache ray ordering once. A tilted plane has zero edge height; invalid
+    triplets contribute nothing, and a scan without any valid triplet is unknown.
     """
-    if hits.shape[-2:] != (9, 3):
-        raise ValueError("Expected a 3 by 3 wheel scan (9 XYZ hits)")
-    valid = torch.isfinite(hits).all(dim=(-2, -1))
-    z = torch.where(torch.isfinite(hits[..., 2]), hits[..., 2], 0.0).reshape(-1, 3, 3)
-    dx = (z[:, 0, :] - 2.0 * z[:, 1, :] + z[:, 2, :]).abs().amax(dim=-1)
-    dy = (z[:, :, 0] - 2.0 * z[:, :, 1] + z[:, :, 2]).abs().amax(dim=-1)
-    return torch.where(valid, torch.maximum(dx, dy), 0.0), valid
+
+    def __init__(self, pattern, device):
+        starts, _ = pattern.func(pattern, device="cpu")
+        xs, xi = starts[:, 0].unique(sorted=True, return_inverse=True)
+        ys, yi = starts[:, 1].unique(sorted=True, return_inverse=True)
+        self._shape = (len(xs), len(ys))
+        keys = xi * len(ys) + yi
+        if min(self._shape) < 3 or len(keys.unique()) != len(xs) * len(ys) or len(keys) != len(keys.unique()):
+            raise ValueError("Terrain detection requires a complete rectangular grid of at least 3x3")
+        for axis in (xs, ys):
+            if not torch.allclose(axis.diff(), axis.diff()[0].expand_as(axis.diff()), atol=1e-6, rtol=1e-5):
+                raise ValueError("Terrain detection requires evenly spaced rays")
+        self._grid_ids = keys.argsort().to(device)
+
+    def __call__(self, hits):
+        grid = hits[:, self._grid_ids].reshape(-1, *self._shape, 3)
+        finite = torch.isfinite(grid).all(dim=-1)
+        z = grid[..., 2].masked_fill(~finite, 0.0)
+        valid_x = finite[:, 2:, :] & finite[:, 1:-1, :] & finite[:, :-2, :]
+        valid_y = finite[:, :, 2:] & finite[:, :, 1:-1] & finite[:, :, :-2]
+        dx = (z[:, 2:, :] - 2 * z[:, 1:-1, :] + z[:, :-2, :]).abs().masked_fill(~valid_x, 0.0)
+        dy = (z[:, :, 2:] - 2 * z[:, :, 1:-1] + z[:, :, :-2]).abs().masked_fill(~valid_y, 0.0)
+        valid = valid_x.any(dim=(1, 2)) | valid_y.any(dim=(1, 2))
+        edge = torch.maximum(dx.amax(dim=(1, 2)), dy.amax(dim=(1, 2)))
+        return edge, valid
 
 
-def terrain_motion_scale(env, sensor_names: list[str], rough_scale: float) -> torch.Tensor:
-    """Relax style penalties continuously between 3 and 8 cm local edges."""
-    if not 0.0 <= rough_scale <= 1.0:
-        raise ValueError("rough_scale must be in [0, 1]")
-    steps = [scan_step_height(env.scene.sensors[name].data.ray_hits_w.torch)[0] for name in sensor_names]
-    roughness = torch.stack(steps, dim=-1).amax(dim=-1)
-    gate = ((roughness - 0.03) / 0.05).clamp(0.0, 1.0)
-    return 1.0 - (1.0 - rough_scale) * gate
+def terrain_step_gate(edge, step_threshold: float, step_full_height: float):
+    """Smooth obstacle strength from zero to one, shared by gait and style costs."""
+    if not 0 <= step_threshold < step_full_height or not math.isfinite(step_full_height):
+        raise ValueError("Require 0 <= step_threshold < finite step_full_height")
+    blend = ((edge - step_threshold) / (step_full_height - step_threshold)).clamp(0.0, 1.0)
+    return blend.square() * (3.0 - 2.0 * blend)

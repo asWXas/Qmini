@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
 
 # --------------------------------------------------------------------------
+__all__ = ["modify_term_cfg_Q", "terrain_levels_vel", "override_rel_standing_envs"]
+
+
 class modify_term_cfg_Q(modify_env_param):
     """修改 manager term cfg，并返回当前实际值用于 Curriculum 日志。"""
 

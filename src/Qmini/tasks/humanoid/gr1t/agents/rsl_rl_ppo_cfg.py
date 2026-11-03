@@ -16,6 +16,7 @@ class PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     max_iterations = 30000
     save_interval = 150
     experiment_name = "flat"
+    obs_groups = {"actor": ["critic"], "critic": ["critic"]}
     actor = RslRlMLPModelCfg(
         hidden_dims=[512, 256, 128],
         activation="elu",

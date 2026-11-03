@@ -10,19 +10,76 @@ import warp as wp
 from isaaclab.managers import ManagerTermBase, SceneEntityCfg
 from isaaclab_newton.physics import NewtonCfg
 
+from .rewards.diagnostics import _find_term
+from .rewards.gait import _gait_phase, _pure_x_command_mask
+from .terrain_geometry import GridScanEdgeDetector as _GridScanEdgeDetector
+from .terrain_geometry import terrain_step_gate as _terrain_step_gate
 
 
-def wheel_scan_height_range(env, sensor_names: list[str]):
-    """每个轮子九个扫描点的 Z 极差，按传入顺序返回 (num_envs, 4)，单位米。
+class gait_phase(ManagerTermBase):
+    """Expose a clock only when the configured rewards demand gait.
 
-    扫描缺失时返回 1.5 m，避免将未知地形当作平地或输出 NaN。
+    Standing and smooth pure-X rolling return [0, 0]. Maneuvers get a full
+    sine/cosine clock on any terrain; pure-X obstacles scale it by the reward's
+    terrain blend. The episode clock keeps running internally while hidden.
+    Read startup reward parameters, including multi-critic configurations,
+    to avoid separate observation settings for timing, gates and enable flags.
     """
-    ranges = []
+
+    def __init__(self, cfg, env):
+        super().__init__(cfg, env)
+        self._maneuver = _find_term(env.cfg.rewards, "explicit_diagonal_gait")
+        self._longitudinal = _find_term(env.cfg.rewards, "pure_x_terrain_gait")
+        self._terrain_edges = None
+        if (
+            self._longitudinal is not None
+            and self._longitudinal.weight != 0.0
+            and self._longitudinal.params.get("enabled", True)
+        ):
+            sensor = env.scene.sensors[self._longitudinal.params["height_sensor_cfg"].name]
+            self._terrain_edges = _GridScanEdgeDetector(sensor.cfg.pattern_cfg, env.device)
+
+    def __call__(self, env):
+        result = env.episode_length_buf.new_zeros((env.episode_length_buf.numel(), 2), dtype=torch.float32)
+        for term, default_period, maneuver in ((self._maneuver, 0.8, True), (self._longitudinal, 0.4, False)):
+            if term is None or term.weight == 0.0 or not term.params.get("enabled", True):
+                continue
+            params = term.params
+            command = env.command_manager.get_command(params.get("command_name", "base_velocity"))
+            threshold = params.get("command_threshold", 0.1)
+            if maneuver:
+                gate = (command[:, 1:3].abs() > threshold).any(-1).to(result.dtype)
+            else:
+                pure_x = _pure_x_command_mask(command, threshold, params.get("pure_x_tolerance"))
+                hits = env.scene.sensors[params["height_sensor_cfg"].name].data.ray_hits_w.torch
+                edge, valid = self._terrain_edges(hits)
+                blend = _terrain_step_gate(
+                    edge, params.get("step_threshold", 0.03), params.get("step_full_height", 0.05)
+                )
+                gate = torch.where(pure_x & valid, blend, 0.0)
+            angle = 2.0 * torch.pi * _gait_phase(env, params.get("period", default_period), params.get("frequency"))
+            result += gate[:, None] * torch.stack((torch.sin(angle), torch.cos(angle)), dim=-1)
+        return result
+
+
+def wheel_height_scan(env, sensor_names: list[str], wheel_radius: float = 0.086):
+    """拼接四轮的完整高度扫描；每轮 3×3 点时返回 (num_envs, 36)，单位米。
+
+    按传入的 FL/FR/RL/RR 顺序拼接，保留各传感器原始射线排列。
+    每点为轮心 Z - wheel_radius - 地面 Z：正值表示离地，负值表示地形高于轮底。
+    射线起点的 1 m 偏移不包含在 data.pos_w 中，不应再次减去。
+    未命中的点返回 1.5 m，避免产生 NaN/Inf 或伪造平地读数。
+    """
+    if len(sensor_names) != 4 or len(set(sensor_names)) != 4:
+        raise ValueError("Expected four distinct wheel scanners ordered FL, FR, RL, RR")
+    scans = []
     for name in sensor_names:
-        heights = env.scene.sensors[name].data.ray_hits_w.torch[..., 2]
-        height_range = heights.amax(dim=-1) - heights.amin(dim=-1)
-        ranges.append(torch.where(torch.isfinite(heights).all(dim=-1), height_range, 1.5))
-    return torch.stack(ranges, dim=-1)
+        data = env.scene.sensors[name].data
+        hits = data.ray_hits_w.torch
+        heights = data.pos_w.torch[:, 2, None] - wheel_radius - hits[..., 2]
+        valid = torch.isfinite(hits).all(dim=-1) & torch.isfinite(heights)
+        scans.append(torch.where(valid, heights, 1.5))
+    return torch.cat(scans, dim=-1)
 
 
 def action_history(env):
@@ -103,6 +160,16 @@ def feet_contact_state(env, sensor_cfg: SceneEntityCfg, threshold: float = 1.0):
 def feet_air_time(env, sensor_cfg: SceneEntityCfg):
     """Current airborne duration in seconds, zero while the foot is in contact."""
     return env.scene.sensors[sensor_cfg.name].data.current_air_time.torch[:, sensor_cfg.body_ids]
+
+
+def base_mass_ratio(env, event_name="add_base_mass"):
+    """Current/default mass of the bodies selected by the mass randomization event."""
+    term = env.event_manager.get_term_cfg(event_name).func
+    mass = term.asset.data.body_mass.torch[:, term.asset_cfg.body_ids]
+    # Observation dimensions are inferred before startup events capture defaults.
+    if term.default_mass is None:
+        return torch.ones_like(mass)
+    return mass / term.default_mass[:, term.asset_cfg.body_ids]
 
 
 def base_com_offset_observation(env, event_name="base_com"):
