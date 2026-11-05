@@ -1,0 +1,5 @@
+output/
+data/runs/
+data/terrains/
+data/training/
+__pycache__/

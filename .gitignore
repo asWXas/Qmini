@@ -13,6 +13,8 @@ videos/
 wandb/
 *.log
 
+skills/
+
 .vscode/
 pyrightconfig.json
 /tools/mothion_data/

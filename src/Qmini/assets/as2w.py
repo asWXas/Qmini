@@ -7,6 +7,7 @@ simulation starting values, not validated hardware parameters.
 import isaaclab.sim as sim_utils
 from isaaclab.actuators import IdealPDActuatorCfg
 from isaaclab.assets import ArticulationCfg
+from isaaclab.sim.utils import clone
 from isaaclab_newton.sim.schemas import NewtonArticulationCfg
 from isaaclab_physx.sim.schemas import PhysxArticulationCfg, PhysxRigidBodyCfg
 
@@ -22,8 +23,76 @@ WHEEL_BODY_NAMES = WHEEL_JOINT_NAMES.copy()
 RIGID_BODY_NAMES = ["base_link", *JOINT_NAMES, "JT128"]
 FIXED_JOINT_NAMES = ["JT128"]
 
+
+@clone
+def spawn_as2w(prim_path, cfg, translation=None, orientation=None, **kwargs):
+    """Filter base/thigh contacts before cloning the robot into other environments."""
+    from isaaclab.sim.spawners.from_files import spawn_from_urdf
+
+    root = spawn_from_urdf(prim_path, cfg, translation, orientation, **kwargs)
+    _filter_base_thigh_collisions(root)
+    return root
+
+
+def _filter_base_thigh_collisions(root):
+    """Filter owned colliders, not nested rigid-body subtrees."""
+    from pxr import Usd, UsdPhysics
+
+    names = ("base_link", *(f"{leg}_thigh" for leg in LEG_PREFIXES))
+    bodies = {}
+    for prim in Usd.PrimRange(root):
+        if prim.HasAPI(UsdPhysics.RigidBodyAPI) and prim.GetName() in names:
+            name = prim.GetName()
+            if name in bodies:
+                raise ValueError(f"Ambiguous AS2W rigid body {name} under {root.GetPath()}")
+            bodies[name] = prim
+    missing = set(names) - bodies.keys()
+    if missing:
+        raise ValueError(f"Missing AS2W rigid bodies {sorted(missing)} under {root.GetPath()}")
+
+    def owned_colliders(body):
+        result = []
+        for prim in Usd.PrimRange(body, Usd.TraverseInstanceProxies()):
+            if not prim.HasAPI(UsdPhysics.CollisionAPI):
+                continue
+            owner = prim
+            while owner and not owner.HasAPI(UsdPhysics.RigidBodyAPI):
+                owner = owner.GetParent()
+            if owner == body:
+                result.append(prim)
+        if not result:
+            raise ValueError(f"No AS2W colliders owned by {body.GetPath()}")
+        return result
+
+    # Only the base colliders need editable API opinions. Expand their instance
+    # roots locally, leaving leg meshes instanced and the source USD untouched.
+    stage = root.GetStage()
+    base_paths = [p.GetPath() for p in owned_colliders(bodies["base_link"])]
+    for path in base_paths:
+        prim = stage.GetPrimAtPath(path)
+        ancestors = []
+        while prim and prim != root:
+            ancestors.append(prim.GetPath())
+            prim = prim.GetParent()
+        for ancestor in reversed(ancestors):
+            prim = stage.GetPrimAtPath(ancestor)
+            if prim.IsInstance():
+                prim.SetInstanceable(False)
+
+    thigh_paths = [
+        collider.GetPath()
+        for leg in LEG_PREFIXES
+        for collider in owned_colliders(bodies[f"{leg}_thigh"])
+    ]
+    for path in base_paths:
+        pairs = UsdPhysics.FilteredPairsAPI.Apply(stage.GetPrimAtPath(path)).CreateFilteredPairsRel() # type: ignore
+        for thigh_path in thigh_paths:
+            pairs.AddTarget(thigh_path)
+
+
 AS2W_CFG = ArticulationCfg(
     spawn=sim_utils.UrdfFileCfg(
+        func=spawn_as2w,
         asset_path=str(AS2W_ASSET_DIR / "as2w.urdf"),
         fix_base=False,
         merge_fixed_joints=False,
@@ -35,7 +104,7 @@ AS2W_CFG = ArticulationCfg(
         ),
         articulation_props=[
             PhysxArticulationCfg(
-                enabled_self_collisions=False,
+                enabled_self_collisions=True,  # 仅排除 base_link 与四条 thigh，见 spawn_as2w。
                 solver_position_iteration_count=8,
                 solver_velocity_iteration_count=4,
             ),
