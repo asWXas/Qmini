@@ -1,4 +1,4 @@
-"""Distill a matching AS2W PPO checkpoint into a smaller student.
+"""Distill a matching AS2W PPO checkpoint into a GRU student.
 
 Both networks consume the environment's ``policy`` observation group. This
 is policy compression, not privileged-observation distillation. Keep the
@@ -13,6 +13,7 @@ from isaaclab_rl.rsl_rl import (
     RslRlDistillationAlgorithmCfg,
     RslRlDistillationRunnerCfg,
     RslRlMLPModelCfg,
+    RslRlRNNModelCfg,
 )
 
 from .rsl_rl_ppo_cfg import AS2WFlatPPORunnerCfg, AS2WRoughPPORunnerCfg
@@ -25,10 +26,13 @@ class AS2WRoughDistillationRunnerCfg(RslRlDistillationRunnerCfg):
     save_interval = 50
     experiment_name = "as2w_rough_distillation"
     obs_groups = {"student": ["policy"], "teacher": ["policy"]}
-    student = RslRlMLPModelCfg(
+    student = RslRlRNNModelCfg(
         hidden_dims=[128, 128],
         activation="elu",
         obs_normalization=False,
+        rnn_type="gru",
+        rnn_hidden_dim=256,
+        rnn_num_layers=1,
         distribution_cfg=RslRlMLPModelCfg.GaussianDistributionCfg(init_std=0.1),
     )
     # Copy the PPO actor so architecture and checkpoint parameter shapes agree.

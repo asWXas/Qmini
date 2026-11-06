@@ -687,7 +687,7 @@ class RewardsCfg:
             "command_threshold": 0.1,  # 姿态系数过渡中心。
             "command_transition_width": 0.15,  # 总宽度：vx、vy、yaw 最大绝对值在 0.05–0.15 平滑过渡。
             "stand_still_scale": 1.5,
-            "moving_hip_scale": 1.0,
+            "moving_hip_scale": 1.25,
             "moving_thigh_scale": 1.0,
             "moving_calf_scale": 1.0,
         },
