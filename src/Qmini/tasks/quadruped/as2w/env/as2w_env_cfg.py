@@ -336,6 +336,7 @@ class ObservationsCfg:
         )
         actions = ObsTerm(
             func=isaaclab_mdp.last_action,
+            history_length=2
         )
 
         # =========================================================
@@ -469,10 +470,6 @@ class ObservationsCfg:
             },
             scale=(0.01, 0.01, 0.01, 0.1, 0.1, 0.1),
         )
-
-        def __post_init__(self):
-            self.enable_corruption = False
-            self.concatenate_terms = True
 
     policy: PolicyCfg = PolicyCfg()
     critic: CriticCfg = CriticCfg()
