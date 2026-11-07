@@ -92,15 +92,22 @@ def stand_still_joint_deviation(
     return (1.0 - blend) * standing_penalty + blend * moving_penalty
 
 
-def diagonal_joint_symmetry_l2(env, left_cfg: SceneEntityCfg, right_cfg: SceneEntityCfg):
+def diagonal_joint_symmetry_l2(
+    env,
+    left_cfg: SceneEntityCfg,
+    right_cfg: SceneEntityCfg,
+    invert_hip: bool = True,
+    invert_thigh: bool = False,
+):
     """对角腿姿态误差平方和；每对只计一次，不包含轮关节。
 
     两侧顺序均为 hip/thigh/calf：FL、FR 对应 RR、RL。
-    hip 绕 X 轴，镜像后反号；thigh/calf 绕 Y 轴，镜像后同号。
+    invert_hip/invert_thigh 控制对应右侧关节是否反号；calf 始终同号。
+    默认 hip 反号、thigh 同号，使用实际关节角度而非默认姿态偏移。
     """
     left = env.scene[left_cfg.name].data.joint_pos.torch[:, left_cfg.joint_ids]
     right = env.scene[right_cfg.name].data.joint_pos.torch[:, right_cfg.joint_ids]
     if left.shape[-1] != 6 or right.shape[-1] != 6:
         raise ValueError("Diagonal symmetry requires two ordered hip/thigh/calf triplets per side")
-    signs = left.new_tensor([-1.0, 1.0, 1.0, -1.0, 1.0, 1.0])
+    signs = left.new_tensor([-1.0 if invert_hip else 1.0, -1.0 if invert_thigh else 1.0, 1.0] * 2)
     return (left - right * signs).square().sum(dim=-1)

@@ -653,11 +653,13 @@ class RewardsCfg:
         },
     )
 
-    # 对角腿姿态镜像：FL ↔ RR、FR ↔ RL；hip 反号，thigh/calf 同号。
+    # 对角腿姿态镜像：FL ↔ RR、FR ↔ RL；hip/thigh 可独立选择是否反号。
     diagonal_joint_symmetry = RewTerm(
         func=mdp.diagonal_joint_symmetry_l2,
         weight=-1.0,
         params={
+            "invert_hip": True,  # True: q_left + q_right；False: q_left - q_right。
+            "invert_thigh": False,  # 大腿关节取反开关；calf 保持同号。
             "left_cfg": SceneEntityCfg(
                 "robot",
                 joint_names=[f"{leg}_{joint}" for leg in ("FL", "FR") for joint in ("hip", "thigh", "calf")],
